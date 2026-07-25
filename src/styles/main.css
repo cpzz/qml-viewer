@@ -1,0 +1,241 @@
+:root {
+  /* Dark theme (default) */
+  --bg-primary: #1e1e1e;
+  --bg-secondary: #2d2d30;
+  --bg-tertiary: #3e3e42;
+  --border-color: #3e3e42;
+  --text-primary: #cccccc;
+  --text-secondary: #888888;
+  --accent-primary: #0e639c;
+  --accent-hover: #1177bb;
+  --scrollbar-bg: #1e1e1e;
+  --scrollbar-thumb: #424242;
+  --scrollbar-thumb-hover: #4e4e4e;
+  --toolbar-btn-bg: #3e3e42;
+  --toolbar-btn-border: #555555;
+  --toolbar-btn-hover-bg: #505054;
+  --toolbar-btn-hover-border: #666666;
+  --divider-bg: #3e3e42;
+  --divider-hover: #0e639c;
+}
+
+.light {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f3f3f3;
+  --bg-tertiary: #e8e8e8;
+  --border-color: #d4d4d4;
+  --text-primary: #333333;
+  --text-secondary: #888888;
+  --accent-primary: #0078d4;
+  --accent-hover: #1a8ad4;
+  --scrollbar-bg: #f3f3f3;
+  --scrollbar-thumb: #c1c1c1;
+  --scrollbar-thumb-hover: #a8a8a8;
+  --toolbar-btn-bg: #e8e8e8;
+  --toolbar-btn-border: #cccccc;
+  --toolbar-btn-hover-bg: #d4d4d4;
+  --toolbar-btn-hover-border: #b0b0b0;
+  --divider-bg: #d4d4d4;
+  --divider-hover: #0078d4;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: background 0.2s, color 0.2s;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--scrollbar-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+/* ===== Layout ===== */
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100vh;
+}
+
+.main-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ===== Toolbar ===== */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.toolbar-spacer {
+  flex: 1;
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.tool-btn:hover {
+  background: var(--toolbar-btn-bg);
+  border-color: var(--toolbar-btn-border);
+}
+
+.tool-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.tool-btn:disabled:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.locale-label {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* ===== Split Pane ===== */
+
+.split-pane {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  overflow: hidden;
+}
+
+.split-pane.dragging,
+.split-pane.dragging * {
+  user-select: none;
+  cursor: col-resize;
+}
+
+.split-pane.dragging .preview-iframe {
+  pointer-events: none;
+}
+
+.left-pane {
+  flex-shrink: 0;
+  overflow: hidden;
+  height: 100%;
+}
+
+.right-pane {
+  flex: 1;
+  overflow: hidden;
+  min-width: 200px;
+  height: 100%;
+}
+
+.divider {
+  width: 6px;
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: transparent;
+  position: relative;
+  z-index: 10;
+}
+
+.divider-line {
+  width: 2px;
+  height: 100%;
+  background: var(--divider-bg);
+  border-radius: 1px;
+  transition: background 0.15s;
+}
+
+.divider:hover .divider-line,
+.split-pane.dragging .divider-line {
+  background: var(--divider-hover);
+}
+
+/* ===== Editor Panel ===== */
+
+.editor-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+}
+
+.editor-container {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ===== Preview Panel ===== */
+
+.preview-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-primary);
+}
+
+.preview-content {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.preview-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: var(--bg-primary);
+  display: block;
+}
