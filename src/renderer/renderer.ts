@@ -88,7 +88,7 @@ function expandListView(node: QMLNode): QMLNode[] {
 /**
  * Render a single QML node and its children to HTML string
  */
-function renderNode(node: QMLNode, parentIsRowOrColumn: boolean = false): string {
+function renderNode(node: QMLNode, _parentIsRowOrColumn: boolean = false): string {
   const mapping = ELEMENT_MAP[node.type]
   const styles = computeAllStyles(node)
   const styleStr = stylesToString(styles)
@@ -204,7 +204,7 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
       // Render header block-property (MenuBar, ToolBar) at the top
       const hasHeader = !!node.blockProperties?.header
       if (hasHeader) {
-        const headerNode = node.blockProperties.header
+        const headerNode = node.blockProperties!.header
         const headerHTML = renderNode(headerNode)
         innerHTML += headerHTML
 

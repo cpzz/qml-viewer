@@ -586,7 +586,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
 
   ApplicationWindow: {
     tag: 'div',
-    computeStyles: (props) => ({
+    computeStyles: (_props) => ({
       'position': 'relative',
       'overflow': 'hidden',
     }),

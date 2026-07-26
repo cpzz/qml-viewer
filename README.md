@@ -26,16 +26,8 @@
 
 ## 安装
 
-### 1. 安装项目依赖
-
 ```bash
 npm install
-```
-
-### 2. 启动开发模式
-
-```bash
-npm run dev
 ```
 
 ## 使用方法
@@ -52,7 +44,9 @@ npm run dev
 npm run build
 ```
 
-### 预览构建结果
+### 预览构建结果（Electron 窗口）
+
+构建后启动 Electron 桌面应用窗口，用于验证生产构建：
 
 ```bash
 npm run preview

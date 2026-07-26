@@ -5,7 +5,7 @@ import { registerQMLLanguage } from '../utils/qmlLang'
 // Configure Monaco Editor workers to load from CDN
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 
-self.MonacoEnvironment = {
+;(self as any).MonacoEnvironment = {
   getWorker(_workerId: string, _label: string) {
     return new EditorWorker()
   },
@@ -20,6 +20,8 @@ interface EditorPanelProps {
 export default function EditorPanel({ code, onChange, isLight }: EditorPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
+  const onChangeRef = useRef(onChange)
+  onChangeRef.current = onChange
 
   useEffect(() => {
     registerQMLLanguage()
@@ -43,7 +45,7 @@ export default function EditorPanel({ code, onChange, isLight }: EditorPanelProp
     editorRef.current = editor
 
     editor.onDidChangeModelContent(() => {
-      onChange(editor.getValue())
+      onChangeRef.current(editor.getValue())
     })
 
     return () => editor.dispose()
@@ -57,6 +59,17 @@ export default function EditorPanel({ code, onChange, isLight }: EditorPanelProp
       })
     }
   }, [isLight])
+
+  // Sync editor content when `code` prop changes
+  useEffect(() => {
+    const editor = editorRef.current
+    if (editor) {
+      const current = editor.getValue()
+      if (current !== code) {
+        editor.setValue(code)
+      }
+    }
+  }, [code])
 
   return (
     <div className="editor-panel">

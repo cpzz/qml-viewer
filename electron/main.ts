@@ -1,7 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
 import { fileURLToPath } from 'node:url'
-import { join } from 'node:path'
-import { readFile, writeFile } from './fileOps'
+import { join, basename } from 'node:path'
+import { stat } from 'node:fs/promises'
+import { readFile, writeFile, readFileByPath, readDirectory } from './fileOps'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
@@ -22,9 +23,16 @@ function createWindow() {
 
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL)
+    mainWindow.webContents.openDevTools()
   } else {
     mainWindow.loadFile(join(__dirname, '../dist/index.html'))
   }
+
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.key === 'F12') {
+      mainWindow?.webContents.toggleDevTools()
+    }
+  })
 }
 
 app.whenReady().then(() => {
@@ -37,6 +45,17 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
+})
+
+ipcMain.handle('file:new', async () => {
+  const result = await dialog.showSaveDialog(mainWindow!, {
+    filters: [{ name: 'QML Files', extensions: ['qml'] }],
+    defaultPath: 'untitled.qml',
+  })
+  if (result.canceled || !result.filePath) return null
+  const template = `import QtQuick\nimport QtQuick.Controls\n\nApplicationWindow {\n    width: 400\n    height: 300\n    visible: true\n    title: "New QML File"\n\n    Label {\n        anchors.centerIn: parent\n        text: "Hello QML"\n        font.pixelSize: 18\n    }\n}\n`
+  await writeFile(result.filePath, template)
+  return { filePath: result.filePath, content: template }
 })
 
 ipcMain.handle('file:open', async () => {
@@ -62,4 +81,29 @@ ipcMain.handle('file:save', async (_event, content: string, filePath?: string) =
   }
   await writeFile(filePath, content)
   return filePath
+})
+
+ipcMain.handle('file:readByPath', async (_event, filePath: string) => {
+  return await readFileByPath(filePath)
+})
+
+ipcMain.handle('file:readDirectory', async (_event, dirPath: string) => {
+  return await readDirectory(dirPath)
+})
+// 转发拖拽文件路径到渲染进程（preload 发送 files-dropped 到主进程，再广播回渲染进程）
+ipcMain.on('files-dropped', (_event, paths: string[]) => {
+  if (mainWindow) {
+    mainWindow.webContents.send('files-dropped', paths)
+  }
+})
+
+ipcMain.handle('file:statBatch', async (_event, filePaths: string[]) => {
+  const results = []
+  for (const p of filePaths) {
+    try {
+      const s = await stat(p)
+      results.push({ path: p, name: basename(p), type: s.isDirectory() ? 'directory' : 'file' })
+    } catch { /* skip */ }
+  }
+  return results
 })
