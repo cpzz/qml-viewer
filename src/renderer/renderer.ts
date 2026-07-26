@@ -88,9 +88,25 @@ function expandListView(node: QMLNode): QMLNode[] {
 /**
  * Render a single QML node and its children to HTML string
  */
-function renderNode(node: QMLNode, _parentIsRowOrColumn: boolean = false): string {
+function renderNode(node: QMLNode, parentType?: string): string {
   const mapping = ELEMENT_MAP[node.type]
   const styles = computeAllStyles(node)
+
+  // If this is a layout container with no explicit width, fill parent width
+  if (!styles['width'] && (
+    node.type === 'ColumnLayout' || node.type === 'Column' ||
+    node.type === 'RowLayout' || node.type === 'Row'
+  )) {
+    styles['width'] = '100%'
+  }
+
+  // If parent is a flex layout (ColumnLayout/Column/RowLayout/Row),
+  // force width:100% on children so they fill the layout
+  const isFlexParent = parentType === 'ColumnLayout' || parentType === 'Column' ||
+                       parentType === 'RowLayout' || parentType === 'Row'
+  if (isFlexParent && !styles['width']) {
+    styles['width'] = '100%'
+  }
   const styleStr = stylesToString(styles)
   const cls = nodeClass(node.type)
   const idAttr = node.id ? ` id="${escapeHTML(node.id)}"` : ''
@@ -140,8 +156,11 @@ function renderNode(node: QMLNode, _parentIsRowOrColumn: boolean = false): strin
 
   // Render children
   if (node.children.length > 0 || (node.type === 'ListView' && node.blockProperties?.delegate)) {
-    const isRow = node.type === 'Row'
-    const isColumn = node.type === 'Column'
+    // Determine if parent is a layout type — needed by children for auto-stretch
+    const layoutParent = (
+      node.type === 'ColumnLayout' || node.type === 'Column' ||
+      node.type === 'RowLayout' || node.type === 'Row'
+    ) ? node.type : undefined
 
     // For ListView, expand delegate+model into children
     const effectiveChildren = node.type === 'ListView'
@@ -149,12 +168,22 @@ function renderNode(node: QMLNode, _parentIsRowOrColumn: boolean = false): strin
       : node.children
 
     for (const child of effectiveChildren) {
-      html += renderNode(child, isRow || isColumn)
+      html += renderNode(child, layoutParent)
     }
   }
 
   html += `</${tag}>`
   return html
+}
+
+/**
+ * Convert QML dimension value to CSS pixel string (e.g. "900" → "900px").
+ * Returns undefined if the value is empty or non-numeric.
+ */
+function winSize(v: string | undefined): string | undefined {
+  if (!v) return undefined
+  const n = parseFloat(v.replace(/px|pt|dp/gi, '').trim())
+  return isNaN(n) ? undefined : `${n}px`
 }
 
 /**
@@ -173,8 +202,8 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
   let bodyStyles: StyleMap = {
     'margin': '0',
     'overflow': 'hidden',
-    'width': '100vw',
-    'height': '100vh',
+    'width': '100%',
+    'height': '100%',
     'background': bgColor,
     'color': textColor,
     'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -190,16 +219,25 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
       if (node.properties.color) {
         bodyStyles['background'] = node.properties.color
       }
-      // Apply window size
-      const w = node.properties.width
-      const h = node.properties.height
-      if (w) bodyStyles['width'] = w.endsWith('px') ? w : `${w}px`
-      if (h) bodyStyles['height'] = h.endsWith('px') ? h : `${h}px`
-      if (w) bodyStyles['max-width'] = bodyStyles['width']
-      if (h) bodyStyles['max-height'] = bodyStyles['height']
 
-      // Mark window div as relative positioned for children
-      innerHTML += `<div class="qml-window" style="position:relative; width:100%; height:100%; overflow:hidden;">`
+      // Use specified window dimensions for a centered window simulation
+      const winW = winSize(node.properties.width)
+      const winH = winSize(node.properties.height)
+
+      // Body uses flexbox to center the window in the preview panel
+      bodyStyles['display'] = 'flex'
+      bodyStyles['justify-content'] = 'center'
+      bodyStyles['align-items'] = 'center'
+
+      // Allow body to scroll when the window is larger than the preview panel
+      if (winW || winH) {
+        bodyStyles['overflow'] = 'auto'
+      }
+
+      const wStyle = winW || '100%'
+      const hStyle = winH || '100%'
+
+      innerHTML += `<div class="qml-window" style="position:relative; width:${wStyle}; height:${hStyle}; overflow:hidden;">`
 
       // Render header block-property (MenuBar, ToolBar) at the top
       const hasHeader = !!node.blockProperties?.header

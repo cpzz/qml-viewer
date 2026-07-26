@@ -30,7 +30,9 @@ export function computeLayoutStyles(props: Record<string, string>): StyleMap {
   const styles: StyleMap = {}
 
   // --- Position: absolute when using anchors or x/y ---
-  const hasAnchors = Object.keys(props).some(k => k.startsWith('anchors.'))
+  // Only positioning anchors (not margin-only properties) trigger absolute positioning
+  const positioningAnchorKeys = ['anchors.fill', 'anchors.left', 'anchors.right', 'anchors.top', 'anchors.bottom', 'anchors.horizontalCenter', 'anchors.verticalCenter', 'anchors.centerIn']
+  const hasAnchors = positioningAnchorKeys.some(k => props[k] !== undefined)
   const useAbsolute = hasAnchors || props.x !== undefined || props.y !== undefined
 
   if (useAbsolute) {

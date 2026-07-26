@@ -38,6 +38,22 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement>(null)
   const filesRef = useRef(files)
   filesRef.current = files
+  const initializedRef = useRef(false)
+
+  // Create default untitled tab on first mount
+  useEffect(() => {
+    if (initializedRef.current) return
+    initializedRef.current = true
+    const tab: FileTab = {
+      id: nextId(),
+      name: 'untitled.qml',
+      path: null,
+      content: DEFAULT_CODE,
+      originalContent: DEFAULT_CODE,
+    }
+    setFiles([tab])
+    setActiveId(tab.id)
+  }, [])
 
   const activeTab = files.find((f) => f.id === activeId) ?? null
   const code = activeTab?.content ?? DEFAULT_CODE
