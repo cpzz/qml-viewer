@@ -1,35 +1,44 @@
 import React from 'react'
-import { PanelRightOpen, PanelLeftOpen, FilePlus, FolderOpen, Save, Sun, Moon, Languages, Globe } from 'lucide-react'
+import { PanelRightOpen, PanelLeftOpen, FilePlus, File, FolderOpen, Save, RefreshCw, Sun, Moon, Languages, Globe } from 'lucide-react'
 import { useI18n } from '../i18n'
 
 interface ToolbarProps {
   isLight: boolean
   onToggleTheme: () => void
   onNew: () => void
-  onOpen: () => void
+  onOpenFiles: () => void
+  onOpenDirectory: () => void
   onSave: () => void
+  onRefresh: () => void
   hasChanges: boolean
+  canRefresh: boolean
   showFileList: boolean
   onToggleFileList: () => void
 }
 
-export default function Toolbar({ isLight, onToggleTheme, onNew, onOpen, onSave, hasChanges, showFileList, onToggleFileList }: ToolbarProps) {
+export default function Toolbar({ isLight, onToggleTheme, onNew, onOpenFiles, onOpenDirectory, onSave, onRefresh, hasChanges, canRefresh, showFileList, onToggleFileList }: ToolbarProps) {
   const { t, locale, toggleLocale } = useI18n()
 
   return (
     <div className="toolbar">
-      <button className="tool-btn" onClick={onToggleFileList} title={showFileList ? 'Hide file list' : 'Show file list'}>
-        {showFileList ? <PanelLeftOpen size={18} /> : <PanelRightOpen size={18} />}
+      <button className="tool-btn" onClick={onToggleFileList} title={t(showFileList ? 'toolbar.hideFileList' : 'toolbar.showFileList')}>
+        {showFileList ? <PanelRightOpen size={18} /> : <PanelLeftOpen size={18} />}
       </button>
       <div className="toolbar-separator" />
       <button className="tool-btn" onClick={onNew} title={t('toolbar.new')}>
+        <File size={18} />
+      </button>
+      <button className="tool-btn" onClick={onOpenFiles} title={t('toolbar.openFile')}>
         <FilePlus size={18} />
       </button>
-      <button className="tool-btn" onClick={onOpen} title={t('toolbar.open')}>
+      <button className="tool-btn" onClick={onOpenDirectory} title={t('toolbar.openDirectory')}>
         <FolderOpen size={18} />
       </button>
       <button className="tool-btn" onClick={onSave} title={t('toolbar.save')} disabled={!hasChanges}>
         <Save size={18} />
+      </button>
+      <button className="tool-btn" onClick={onRefresh} title={t('toolbar.refresh')} disabled={!canRefresh}>
+        <RefreshCw size={18} />
       </button>
       <div className="toolbar-spacer" />
       <button className="tool-btn" onClick={onToggleTheme} title={t('toolbar.theme')}>

@@ -151,10 +151,21 @@ export function computeLayoutStyles(props: Record<string, string>): StyleMap {
     styles['display'] = 'none'
   }
 
+  // --- clip ---
+  if (props['clip'] === 'true') {
+    styles['overflow'] = 'hidden'
+  }
+
   // --- opacity ---
   const opacity = numVal(props['opacity'])
   if (opacity !== null && opacity >= 0 && opacity <= 1) {
     styles['opacity'] = String(opacity)
+  }
+
+  // --- z ---
+  const z = numVal(props['z'])
+  if (z !== null) {
+    styles['z-index'] = String(z)
   }
 
   return styles

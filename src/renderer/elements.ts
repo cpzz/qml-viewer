@@ -16,9 +16,25 @@ export interface ElementMapping {
   getAttributes?: (props: Record<string, string>) => Record<string, string>
 }
 
+const DEFAULT_LAYOUT_SPACING = '5px'
+
 /** Auto-incrementing ID for interactive element identification */
 let _nextId = 1
 function uid(): string { return `iq-${_nextId++}` }
+
+function withSignalAttrs(
+  props: Record<string, string>,
+  type: string,
+  base: Record<string, string> = {},
+): Record<string, string> {
+  const attrs: Record<string, string> = {
+    ...base,
+    'data-qml-type': type,
+  }
+  if (props.onClicked) attrs['data-qml-onclicked'] = props.onClicked
+  if (props.onTriggered) attrs['data-qml-ontriggered'] = props.onTriggered
+  return attrs
+}
 
 /**
  * Parse a QML numeric value, handling units.
@@ -196,6 +212,9 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       const styles: StyleMap = {
         'display': 'flex',
         'flex-direction': 'row',
+        'justify-content': 'flex-start',
+        'align-items': 'flex-start',
+        'gap': DEFAULT_LAYOUT_SPACING,
       }
       if (props.spacing) {
         styles['gap'] = toCSSPx(props.spacing)
@@ -213,6 +232,9 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       const styles: StyleMap = {
         'display': 'flex',
         'flex-direction': 'column',
+        'justify-content': 'flex-start',
+        'align-items': 'flex-start',
+        'gap': DEFAULT_LAYOUT_SPACING,
       }
       if (props.spacing) {
         styles['gap'] = toCSSPx(props.spacing)
@@ -233,7 +255,9 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       const styles: StyleMap = {
         'display': 'flex',
         'flex-direction': 'row',
-        'align-items': 'center',
+        'justify-content': 'flex-start',
+        'align-items': 'flex-start',
+        'gap': DEFAULT_LAYOUT_SPACING,
       }
       if (props.spacing) styles['gap'] = toCSSPx(props.spacing)
       return styles
@@ -246,6 +270,9 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       const styles: StyleMap = {
         'display': 'flex',
         'flex-direction': 'column',
+        'justify-content': 'flex-start',
+        'align-items': 'flex-start',
+        'gap': DEFAULT_LAYOUT_SPACING,
       }
       if (props.spacing) styles['gap'] = toCSSPx(props.spacing)
       return styles
@@ -256,6 +283,95 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
     tag: 'div',
     computeStyles: () => ({
       'overflow': 'auto',
+    }),
+  },
+
+  ScrollView: {
+    tag: 'div',
+    computeStyles: () => ({
+      'overflow': 'auto',
+    }),
+  },
+
+  GridLayout: {
+    tag: 'div',
+    computeStyles: (props) => {
+      const styles: StyleMap = {
+        'display': 'grid',
+        'gap': DEFAULT_LAYOUT_SPACING,
+        'justify-items': 'start',
+        'align-items': 'start',
+      }
+      if (props.spacing) styles['gap'] = toCSSPx(props.spacing)
+      const cols = parseNumeric(props.columns || '')
+      if (cols && cols > 0) {
+        styles['grid-template-columns'] = `repeat(${Math.floor(cols)}, minmax(0, auto))`
+      }
+      return styles
+    },
+  },
+
+  Flow: {
+    tag: 'div',
+    computeStyles: (props) => {
+      const styles: StyleMap = {
+        'display': 'flex',
+        'flex-wrap': 'wrap',
+        'gap': DEFAULT_LAYOUT_SPACING,
+        'justify-content': 'flex-start',
+        'align-items': 'flex-start',
+        'align-content': 'flex-start',
+      }
+      if (props.spacing) styles['gap'] = toCSSPx(props.spacing)
+      return styles
+    },
+  },
+
+  Repeater: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'contents',
+    }),
+  },
+
+  ListModel: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'none',
+    }),
+  },
+
+  ListElement: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'none',
+    }),
+  },
+
+  Connections: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'none',
+    }),
+  },
+
+  Component: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'contents',
+    }),
+  },
+
+  Loader: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'block',
+      'position': 'relative',
+      'min-height': '1px',
+    }),
+    getAttributes: (props) => ({
+      'data-qml-loader': 'true',
+      'data-qml-active': props.active || 'true',
     }),
   },
 
@@ -296,7 +412,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       'user-select': 'none',
       'transition': 'transform 0.1s, background 0.2s',
     }),
-    getAttributes: () => ({ 'data-qml-type': 'button' }),
+    getAttributes: (props) => withSignalAttrs(props, 'button'),
   },
 
   RoundButton: {
@@ -316,7 +432,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       'user-select': 'none',
       'transition': 'transform 0.1s',
     }),
-    getAttributes: () => ({ 'data-qml-type': 'roundbutton' }),
+    getAttributes: (props) => withSignalAttrs(props, 'roundbutton'),
   },
 
   ToolButton: {
@@ -333,7 +449,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       'cursor': 'pointer',
       'transition': 'background 0.2s',
     }),
-    getAttributes: () => ({ 'data-qml-type': 'toolbutton' }),
+    getAttributes: (props) => withSignalAttrs(props, 'toolbutton'),
   },
 
   CheckBox: {
@@ -350,8 +466,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       const checked = props.checked === 'true'
       return `<span class="qml-cb-marker" style="font-size:16px;line-height:1">${checked ? '✓' : '☐'}</span><span class="qml-cb-text">${escapeHTML(props.text || '')}</span>`
     },
-    getAttributes: (props) => ({
-      'data-qml-type': 'checkbox',
+    getAttributes: (props) => withSignalAttrs(props, 'checkbox', {
       'data-qml-checked': props.checked === 'true' ? 'true' : 'false',
       'data-qml-text': props.text || '',
       'data-qml-id': uid(),
@@ -372,8 +487,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       const checked = props.checked === 'true' ? '◉' : '○'
       return `<span style="font-size:16px;line-height:1">${checked}</span> ${escapeHTML(props.text || '')}`
     },
-    getAttributes: (props) => ({
-      'data-qml-type': 'radio',
+    getAttributes: (props) => withSignalAttrs(props, 'radio', {
       'data-qml-group': props.Group || props.group || 'default',
       'data-qml-text': props.text || '',
       'data-qml-id': uid(),
@@ -394,8 +508,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       const on = props.checked === 'true'
       return `<span style="display:inline-block;width:36px;height:18px;background:${on ? 'var(--qml-switch-on,#4cd964)' : 'var(--qml-switch-off)'};border-radius:9px;position:relative;transition:0.2s"><span style="display:block;width:14px;height:14px;background:var(--qml-control-bg);border-radius:50%;position:absolute;top:2px;${on ? 'right:2px' : 'left:2px'};transition:0.2s"></span></span>`
     },
-    getAttributes: (props) => ({
-      'data-qml-type': 'switch',
+    getAttributes: (props) => withSignalAttrs(props, 'switch', {
       'data-qml-checked': props.checked === 'true' ? 'true' : 'false',
       'data-qml-id': uid(),
     }),
@@ -407,23 +520,172 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       const val = parseFloat(props.value || '0')
       const from = parseFloat(props.from || '0')
       const to = parseFloat(props.to || '100')
-      const pct = Math.min(100, Math.max(0, ((val - from) / (to - from)) * 100))
+      const range = to - from
+      const pct = range === 0 ? 0 : Math.min(100, Math.max(0, ((val - from) / range) * 100))
       return {
         'position': 'relative',
         'height': '20px',
-        'background': 'var(--qml-slider-track)',
-        'border-radius': '4px',
+        'min-width': '140px',
+        'padding': '8px 0',
         'cursor': 'pointer',
-        ...(isNaN(pct) ? {} : {
-          'background': `linear-gradient(to right, var(--qml-accent) ${pct}%, var(--qml-slider-track) ${pct}%)`,
-        }),
       }
     },
-    getAttributes: (props) => ({
-      'data-qml-type': 'slider',
+    renderContent: (props) => {
+      const val = parseFloat(props.value || '0')
+      const from = parseFloat(props.from || '0')
+      const to = parseFloat(props.to || '100')
+      const range = to - from
+      const pct = range === 0 ? 0 : Math.min(100, Math.max(0, ((val - from) / range) * 100))
+      return `<span class="qml-slider-track" style="display:block;position:relative;height:4px;border-radius:2px;background:var(--qml-slider-track);overflow:visible;"><span class="qml-slider-fill" style="display:block;position:absolute;left:0;top:0;height:100%;width:${pct}%;background:var(--qml-accent);"></span><span class="qml-slider-thumb" style="display:block;position:absolute;top:50%;left:calc(${pct}% - 7px);width:14px;height:14px;border-radius:50%;background:var(--qml-control-bg);border:2px solid var(--qml-accent);transform:translateY(-50%);"></span></span>`
+    },
+    getAttributes: (props) => withSignalAttrs(props, 'slider', {
       'data-qml-value': props.value || '0',
       'data-qml-from': props.from || '0',
       'data-qml-to': props.to || '100',
+      'data-qml-id': uid(),
+    }),
+  },
+
+  RangeSlider: {
+    tag: 'div',
+    computeStyles: () => ({
+      'position': 'relative',
+      'height': '20px',
+      'min-width': '180px',
+      'padding': '8px 0',
+      'cursor': 'pointer',
+    }),
+    renderContent: (props) => {
+      const from = parseFloat(props.from || '0')
+      const to = parseFloat(props.to || '100')
+      const first = parseFloat(props['first.value'] || props.value || props.from || '0')
+      const second = parseFloat(props['second.value'] || props.to || '100')
+      const range = to - from || 1
+      const p1 = Math.min(100, Math.max(0, ((first - from) / range) * 100))
+      const p2 = Math.min(100, Math.max(0, ((second - from) / range) * 100))
+      const left = Math.min(p1, p2)
+      const right = Math.max(p1, p2)
+      return `<span class="qml-range-track" style="display:block;position:relative;height:4px;border-radius:2px;background:var(--qml-slider-track)"><span class="qml-range-fill" style="display:block;position:absolute;left:${left}%;width:${Math.max(0, right - left)}%;height:100%;background:var(--qml-accent)"></span><span class="qml-range-first" style="position:absolute;left:calc(${left}% - 6px);top:50%;width:12px;height:12px;border-radius:50%;transform:translateY(-50%);background:var(--qml-control-bg);border:2px solid var(--qml-accent)"></span><span class="qml-range-second" style="position:absolute;left:calc(${right}% - 6px);top:50%;width:12px;height:12px;border-radius:50%;transform:translateY(-50%);background:var(--qml-control-bg);border:2px solid var(--qml-accent)"></span></span>`
+    },
+    getAttributes: (props) => withSignalAttrs(props, 'rangeslider', {
+      'data-qml-first': props['first.value'] || props.from || '0',
+      'data-qml-second': props['second.value'] || props.to || '100',
+      'data-qml-from': props.from || '0',
+      'data-qml-to': props.to || '100',
+      'data-qml-id': uid(),
+    }),
+  },
+
+  Dial: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'inline-flex',
+      'align-items': 'center',
+      'justify-content': 'center',
+      'width': '44px',
+      'height': '44px',
+      'border': '1px solid var(--qml-control-border)',
+      'border-radius': '50%',
+      'background': 'var(--qml-control-bg)',
+      'position': 'relative',
+    }),
+    renderContent: (props) => {
+      const from = parseFloat(props.from || '0')
+      const to = parseFloat(props.to || '100')
+      const value = parseFloat(props.value || '0')
+      const range = to - from || 1
+      const p = Math.min(1, Math.max(0, (value - from) / range))
+      const angle = -135 + p * 270
+      return `<span class="qml-dial-needle" style="position:absolute;left:50%;top:calc(50% - 13px);display:block;width:2px;height:14px;background:var(--qml-accent);transform:rotate(${angle}deg);transform-origin:center bottom;"></span>`
+    },
+    getAttributes: (props) => withSignalAttrs(props, 'dial', {
+      'data-qml-value': props.value || '0',
+      'data-qml-from': props.from || '0',
+      'data-qml-to': props.to || '100',
+      'data-qml-id': uid(),
+    }),
+  },
+
+  SpinBox: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'inline-flex',
+      'align-items': 'stretch',
+      'border': '1px solid var(--qml-control-border)',
+      'border-radius': '4px',
+      'overflow': 'hidden',
+      'background': 'var(--qml-control-bg)',
+      'color': 'var(--qml-control-text)',
+      'min-width': '90px',
+      'font-size': '13px',
+      'user-select': 'none',
+    }),
+    renderContent: (props) => {
+      const value = props.value || '0'
+      return `<span class="qml-spinbox-dec" style="padding:6px 8px;cursor:pointer;border-right:1px solid var(--qml-control-border)">-</span><span class="qml-spinbox-value" style="padding:6px 10px;min-width:36px;text-align:center">${escapeHTML(value)}</span><span class="qml-spinbox-inc" style="padding:6px 8px;cursor:pointer;border-left:1px solid var(--qml-control-border)">+</span>`
+    },
+    getAttributes: (props) => withSignalAttrs(props, 'spinbox', {
+      'data-qml-value': props.value || '0',
+      'data-qml-from': props.from || '0',
+      'data-qml-to': props.to || '99',
+      'data-qml-step': props.stepSize || '1',
+      'data-qml-id': uid(),
+    }),
+  },
+
+  Tumbler: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'inline-flex',
+      'flex-direction': 'column',
+      'justify-content': 'center',
+      'align-items': 'center',
+      'min-width': '80px',
+      'height': '80px',
+      'border': '1px solid var(--qml-control-border)',
+      'border-radius': '4px',
+      'background': 'var(--qml-control-bg)',
+      'color': 'var(--qml-control-text)',
+      'font-size': '12px',
+      'overflow': 'hidden',
+    }),
+    renderContent: (props) => {
+      const idx = parseInt(props.currentIndex || '0', 10)
+      const model = props.model || '[]'
+      let items: string[] = []
+      try { items = JSON.parse(model) } catch { items = [] }
+      const current = items[idx] ?? `${idx}`
+      return `<span class="qml-tumbler-up" style="opacity:.45;cursor:pointer">▲</span><span class="qml-tumbler-value" style="font-weight:600;padding:4px 0">${escapeHTML(String(current))}</span><span class="qml-tumbler-down" style="opacity:.45;cursor:pointer">▼</span>`
+    },
+    getAttributes: (props) => withSignalAttrs(props, 'tumbler', {
+      'data-qml-model': props.model || '[]',
+      'data-qml-currentindex': props.currentIndex || '0',
+      'data-qml-id': uid(),
+    }),
+  },
+
+  DelayButton: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'inline-flex',
+      'align-items': 'center',
+      'justify-content': 'center',
+      'position': 'relative',
+      'overflow': 'hidden',
+      'padding': '6px 16px',
+      'background': 'var(--qml-btn-bg)',
+      'border': '1px solid var(--qml-control-border)',
+      'border-radius': '4px',
+      'font-size': '13px',
+      'cursor': 'pointer',
+      'user-select': 'none',
+    }),
+    renderContent: (props) => {
+      const text = escapeHTML(props.text || 'Delay')
+      return `<span class="qml-delay-fill" style="position:absolute;left:0;top:0;bottom:0;width:0;background:rgba(0,120,212,.22)"></span><span style="position:relative">${text}</span>`
+    },
+    getAttributes: (props) => withSignalAttrs(props, 'delaybutton', {
+      'data-qml-delay': props.delay || '800',
       'data-qml-id': uid(),
     }),
   },
@@ -509,8 +771,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
         : ''
       return `<span style="flex:1;color:var(--qml-muted-text)">${escapeHTML(placeholder)}</span> ${dropdown}`
     },
-    getAttributes: (props) => ({
-      'data-qml-type': 'combobox',
+    getAttributes: (props) => withSignalAttrs(props, 'combobox', {
       'data-qml-model': props.model || '[]',
       'data-qml-currentindex': '-1',
       'data-qml-placeholdertext': props.placeholderText || 'Select...',
@@ -525,6 +786,9 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       'gap': '2px',
       'border-bottom': '2px solid var(--qml-accent)',
     }),
+    getAttributes: (props) => ({
+      'data-qml-currentindex': props.currentIndex || '0',
+    }),
   },
 
   TabButton: {
@@ -538,7 +802,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       'user-select': 'none',
       'transition': 'border-color 0.2s, color 0.2s',
     }),
-    getAttributes: () => ({ 'data-qml-type': 'tabbutton' }),
+    getAttributes: (props) => withSignalAttrs(props, 'tabbutton'),
   },
 
   StackLayout: {
@@ -546,6 +810,124 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
     computeStyles: () => ({
       'position': 'relative',
       'min-height': '40px',
+    }),
+    getAttributes: (props) => ({
+      'data-qml-currentindex': props.currentIndex || '0',
+    }),
+  },
+
+  SwipeView: {
+    tag: 'div',
+    computeStyles: () => ({
+      'position': 'relative',
+      'overflow': 'hidden',
+      'min-height': '40px',
+      'border': '1px solid var(--qml-list-border)',
+      'border-radius': '4px',
+    }),
+    getAttributes: (props) => ({
+      'data-qml-type': 'swipeview',
+      'data-qml-currentindex': props.currentIndex || '0',
+    }),
+  },
+
+  StackView: {
+    tag: 'div',
+    computeStyles: () => ({
+      'position': 'relative',
+      'overflow': 'hidden',
+      'min-height': '40px',
+      'border': '1px solid var(--qml-list-border)',
+      'border-radius': '4px',
+    }),
+    getAttributes: (props) => ({
+      'data-qml-type': 'stackview',
+      'data-qml-currentindex': props.currentIndex || '0',
+    }),
+  },
+
+  SplitView: {
+    tag: 'div',
+    computeStyles: (props) => ({
+      'display': 'flex',
+      'flex-direction': props.orientation === 'Qt.Vertical' ? 'column' : 'row',
+      'gap': DEFAULT_LAYOUT_SPACING,
+      'align-items': 'stretch',
+      'justify-content': 'stretch',
+    }),
+  },
+
+  Page: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'block',
+      'border': '1px solid var(--qml-list-border)',
+      'border-radius': '6px',
+      'padding': '10px',
+      'background': 'var(--qml-control-bg)',
+    }),
+  },
+
+  Pane: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'block',
+      'border': '1px solid var(--qml-list-border)',
+      'border-radius': '6px',
+      'padding': '10px',
+      'background': 'var(--qml-control-bg)',
+    }),
+  },
+
+  Frame: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'block',
+      'border': '1px solid var(--qml-control-border)',
+      'border-radius': '4px',
+      'padding': '8px',
+      'background': 'var(--qml-control-bg)',
+    }),
+  },
+
+  Drawer: {
+    tag: 'div',
+    computeStyles: (props) => ({
+      'display': 'block',
+      'position': 'relative',
+      'width': props.width ? toCSSPx(props.width) : '240px',
+      'min-height': props.height ? toCSSPx(props.height) : '48px',
+      'background': 'var(--qml-control-bg)',
+      'border': '1px solid var(--qml-control-border)',
+      'border-radius': '6px',
+      'padding': '10px',
+    }),
+  },
+
+  Popup: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'block',
+      'position': 'relative',
+      'min-width': '120px',
+      'min-height': '40px',
+      'padding': '10px',
+      'border': '1px solid var(--qml-control-border)',
+      'border-radius': '6px',
+      'background': 'var(--qml-dialog-bg)',
+      'box-shadow': '0 4px 12px var(--qml-dialog-shadow)',
+    }),
+  },
+
+  ToolTip: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'inline-block',
+      'padding': '4px 8px',
+      'font-size': '12px',
+      'color': 'var(--qml-control-bg)',
+      'background': 'var(--qml-control-text)',
+      'border-radius': '4px',
     }),
   },
 
@@ -556,6 +938,75 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       'border': '1px solid var(--qml-list-border)',
       'border-radius': '4px',
     }),
+    getAttributes: (props) => withSignalAttrs(props, 'listview', {
+      'data-qml-currentindex': props.currentIndex || '-1',
+    }),
+  },
+
+  TableView: {
+    tag: 'div',
+    computeStyles: () => ({
+      'overflow': 'auto',
+      'border': '1px solid var(--qml-list-border)',
+      'border-radius': '4px',
+      'padding': '4px',
+      'font-size': '12px',
+    }),
+    getAttributes: (props) => withSignalAttrs(props, 'tableview', {
+      'data-qml-currentindex': props.currentIndex || '-1',
+      'data-qml-model-ref': props.model || '',
+      'data-qml-columns': props.columns || '[]',
+      'data-qml-headers': props.headers || props.columns || '[]',
+      'data-qml-editable': props.editable || 'false',
+      'data-qml-selectionmode': props.selectionMode || 'SingleSelection',
+      'data-qml-resizablecolumns': props.resizableColumns || 'false',
+      'data-qml-columnwidths': props.columnWidths || '[]',
+    }),
+  },
+
+  TreeView: {
+    tag: 'div',
+    computeStyles: () => ({
+      'overflow': 'auto',
+      'border': '1px solid var(--qml-list-border)',
+      'border-radius': '4px',
+      'padding': '6px',
+      'font-size': '12px',
+    }),
+    getAttributes: (props) => withSignalAttrs(props, 'treeview', {
+      'data-qml-currentindex': props.currentIndex || '-1',
+      'data-qml-model-ref': props.model || '',
+      'data-qml-idrole': props.idRole || 'nodeId',
+      'data-qml-parentrole': props.parentRole || 'parentId',
+      'data-qml-textrole': props.textRole || 'text',
+      'data-qml-expanded': props.expanded || 'true',
+      'data-qml-selectionmode': props.selectionMode || 'SingleSelection',
+    }),
+  },
+
+  HorizontalHeaderView: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'flex',
+      'gap': '1px',
+      'padding': '2px',
+      'background': 'var(--qml-menubar-bg)',
+      'border': '1px solid var(--qml-list-border)',
+      'font-size': '12px',
+    }),
+  },
+
+  VerticalHeaderView: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'flex',
+      'flex-direction': 'column',
+      'gap': '1px',
+      'padding': '2px',
+      'background': 'var(--qml-menubar-bg)',
+      'border': '1px solid var(--qml-list-border)',
+      'font-size': '12px',
+    }),
   },
 
   ItemDelegate: {
@@ -565,6 +1016,10 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       'border-bottom': '1px solid var(--qml-item-border)',
       'font-size': '13px',
       'cursor': 'pointer',
+    }),
+    getAttributes: (props) => withSignalAttrs(props, 'itemdelegate', {
+      'data-qml-index': props.__index || '-1',
+      'tabindex': '0',
     }),
   },
 
@@ -584,25 +1039,47 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
     renderContent: () => '',
   },
 
+  ScrollIndicator: {
+    tag: 'div',
+    computeStyles: () => ({
+      'position': 'absolute',
+      'right': '2px',
+      'top': '2px',
+      'bottom': '2px',
+      'width': '4px',
+      'border-radius': '2px',
+      'background': 'rgba(127,127,127,.35)',
+      'pointer-events': 'none',
+    }),
+  },
+
   ApplicationWindow: {
     tag: 'div',
     computeStyles: (_props) => ({
       'position': 'relative',
       'overflow': 'hidden',
+      'border': '1px solid var(--qml-window-border)',
+      'background': 'var(--qml-window-bg)',
+      'box-shadow': '0 2px 8px var(--qml-window-shadow)',
     }),
   },
 
   Dialog: {
     tag: 'div',
-    computeStyles: () => ({
+    computeStyles: (props) => ({
       'display': 'none',
       'position': 'relative',
       'margin': '16px',
+      'min-width': props.width ? '0' : '320px',
+      'min-height': props.height ? '0' : '160px',
+      'max-width': 'min(640px, calc(100vw - 64px))',
+      'max-height': 'calc(100vh - 96px)',
       'border': '1px solid var(--qml-control-border)',
       'border-radius': '8px',
       'background': 'var(--qml-dialog-bg)',
       'box-shadow': '0 4px 12px var(--qml-dialog-shadow)',
-      'padding': '20px',
+      'padding': '0',
+      'overflow': 'hidden',
     }),
   },
 
@@ -642,6 +1119,169 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       'cursor': 'pointer',
       'white-space': 'nowrap',
     }),
+    getAttributes: (props) => withSignalAttrs(props, 'menuitem'),
+  },
+
+  MenuSeparator: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'block',
+      'height': '1px',
+      'margin': '4px 8px',
+      'background': 'var(--qml-control-border)',
+    }),
+  },
+
+  Action: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'none',
+    }),
+  },
+
+  ActionGroup: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'none',
+    }),
+  },
+
+  Shortcut: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'none',
+    }),
+  },
+
+  Calendar: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'grid',
+      'grid-template-columns': 'repeat(7, 1fr)',
+      'gap': '2px',
+      'padding': '8px',
+      'border': '1px solid var(--qml-list-border)',
+      'border-radius': '6px',
+      'font-size': '12px',
+      'background': 'var(--qml-control-bg)',
+    }),
+    renderContent: () => {
+      const days = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su']
+      const headers = days.map((d) => `<span style="font-weight:600;text-align:center">${d}</span>`).join('')
+      const cells = Array.from({ length: 35 }, (_, i) => `<span class="qml-calendar-day" data-qml-day="${(i % 30) + 1}" style="text-align:center;padding:2px 0;opacity:${i % 7 === 5 || i % 7 === 6 ? '.7' : '1'};cursor:pointer;border-radius:3px">${(i % 30) + 1}</span>`).join('')
+      return headers + cells
+    },
+    getAttributes: (props) => withSignalAttrs(props, 'calendar', {
+      'data-qml-selectedday': props.selectedDay || '',
+    }),
+  },
+
+  DatePicker: {
+    tag: 'input',
+    computeStyles: () => ({
+      'display': 'block',
+      'padding': '6px 10px',
+      'border': '1px solid var(--qml-control-border)',
+      'border-radius': '4px',
+      'font-size': '13px',
+      'background': 'var(--qml-control-bg)',
+      'color': 'var(--qml-control-text)',
+    }),
+    getAttributes: (props) => ({
+      'type': 'date',
+      'value': props.date || props.value || '',
+    }),
+  },
+
+  TimePicker: {
+    tag: 'input',
+    computeStyles: () => ({
+      'display': 'block',
+      'padding': '6px 10px',
+      'border': '1px solid var(--qml-control-border)',
+      'border-radius': '4px',
+      'font-size': '13px',
+      'background': 'var(--qml-control-bg)',
+      'color': 'var(--qml-control-text)',
+    }),
+    getAttributes: (props) => ({
+      'type': 'time',
+      'value': props.time || props.value || '',
+    }),
+  },
+
+  ShaderEffect: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'block',
+      'position': 'relative',
+      'filter': 'saturate(1.05)',
+    }),
+  },
+
+  DropShadow: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'block',
+      'position': 'relative',
+      'box-shadow': '0 6px 14px rgba(0,0,0,.25)',
+    }),
+  },
+
+  OpacityMask: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'block',
+      'position': 'relative',
+      'opacity': '.9',
+    }),
+  },
+
+  ChartView: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'flex',
+      'align-items': 'center',
+      'justify-content': 'center',
+      'min-height': '120px',
+      'border': '1px solid var(--qml-list-border)',
+      'border-radius': '6px',
+      'background': 'linear-gradient(180deg, rgba(77,166,255,.12), rgba(77,166,255,.02))',
+      'font-size': '12px',
+      'color': 'var(--qml-muted-text)',
+    }),
+    renderContent: () => 'ChartView',
+  },
+
+  WebEngineView: {
+    tag: 'iframe',
+    computeStyles: () => ({
+      'display': 'block',
+      'width': '100%',
+      'height': '100%',
+      'border': '1px solid var(--qml-list-border)',
+      'border-radius': '4px',
+      'background': 'var(--qml-control-bg)',
+    }),
+    getAttributes: (props) => ({
+      'src': props.url || 'about:blank',
+    }),
+  },
+
+  VideoOutput: {
+    tag: 'div',
+    computeStyles: () => ({
+      'display': 'flex',
+      'align-items': 'center',
+      'justify-content': 'center',
+      'min-height': '120px',
+      'background': '#111',
+      'color': '#ddd',
+      'border-radius': '6px',
+      'border': '1px solid #333',
+      'font-size': '12px',
+    }),
+    renderContent: () => 'VideoOutput',
   },
 
   Label: {

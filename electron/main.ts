@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
 import { fileURLToPath } from 'node:url'
 import { join, basename } from 'node:path'
 import { stat } from 'node:fs/promises'
-import { readFile, writeFile, readFileByPath, readDirectory } from './fileOps'
+import { readFile, writeFile, readFileByPath, readDirectory, listQmlFilesInDirectory } from './fileOps'
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url))
 
@@ -53,7 +53,7 @@ ipcMain.handle('file:new', async () => {
     defaultPath: 'untitled.qml',
   })
   if (result.canceled || !result.filePath) return null
-  const template = `import QtQuick\nimport QtQuick.Controls\n\nApplicationWindow {\n    width: 400\n    height: 300\n    visible: true\n    title: "New QML File"\n\n    Label {\n        anchors.centerIn: parent\n        text: "Hello QML"\n        font.pixelSize: 18\n    }\n}\n`
+  const template = ''
   await writeFile(result.filePath, template)
   return { filePath: result.filePath, content: template }
 })
@@ -69,6 +69,32 @@ ipcMain.handle('file:open', async () => {
   const filePath = result.filePaths[0]
   const content = await readFile(filePath)
   return { filePath, content }
+})
+
+ipcMain.handle('file:openFiles', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'QML Files', extensions: ['qml'] }],
+  })
+
+  if (result.canceled || result.filePaths.length === 0) return []
+
+  const files = [] as Array<{ filePath: string; content: string }>
+  for (const filePath of result.filePaths) {
+    const content = await readFile(filePath)
+    files.push({ filePath, content })
+  }
+  return files
+})
+
+ipcMain.handle('file:openDirectory', async () => {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    properties: ['openDirectory'],
+  })
+
+  if (result.canceled || result.filePaths.length === 0) return []
+
+  return await listQmlFilesInDirectory(result.filePaths[0])
 })
 
 ipcMain.handle('file:save', async (_event, content: string, filePath?: string) => {

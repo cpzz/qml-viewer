@@ -8,6 +8,68 @@ import { parseQML } from './parser'
 import { ELEMENT_MAP, type StyleMap, escapeHTML, escapeAttr } from './elements'
 import { computeLayoutStyles } from './layouts'
 
+type ListModelRow = Record<string, string>
+type ListModelMap = Record<string, ListModelRow[]>
+type ComponentMap = Record<string, QMLNode>
+type PreviewSurface = { node: QMLNode; key: string; label: string }
+
+function displayProperty(value?: string): string {
+  const text = (value || '').trim()
+  if ((text.startsWith('"') && text.endsWith('"')) || (text.startsWith("'") && text.endsWith("'"))) {
+    return text.slice(1, -1)
+  }
+  return text
+}
+
+function dialogButtons(value?: string): Array<{ label: string; action: 'accept' | 'reject'; primary: boolean }> {
+  if (!value) return []
+  const affirmative = new Set(['Ok', 'Open', 'Save', 'SaveAll', 'Yes', 'YesToAll', 'Retry'])
+  const negative = new Set(['Cancel', 'Close', 'No', 'NoToAll', 'Abort', 'Discard'])
+  const labels: Record<string, string> = { Ok: 'OK', SaveAll: 'Save All', YesToAll: 'Yes to All', NoToAll: 'No to All' }
+
+  return value.split('|').map(part => part.trim().replace(/^Dialog\./, '')).filter(Boolean).map(name => ({
+    label: labels[name] || name,
+    action: negative.has(name) ? 'reject' as const : 'accept' as const,
+    primary: affirmative.has(name),
+  }))
+}
+
+function splitPreviewSurfaces(nodes: QMLNode[]): { roots: QMLNode[]; surfaces: PreviewSurface[] } {
+  const surfaces: PreviewSurface[] = []
+  const counts: Record<string, number> = { Dialog: 0, Popup: 0 }
+
+  const cloneWithoutSurfaces = (node: QMLNode): QMLNode | null => {
+    if (node.type === 'Dialog' || node.type === 'Popup') {
+      counts[node.type] += 1
+      const key = node.id || `qml-preview-${node.type.toLowerCase()}-${counts[node.type]}`
+      const label = displayProperty(node.properties.title) || node.id || `${node.type} ${counts[node.type]}`
+      surfaces.push({ node, key, label })
+      return null
+    }
+
+    const blockProperties = node.blockProperties
+      ? Object.fromEntries(
+          Object.entries(node.blockProperties)
+            .map(([name, child]) => [name, cloneWithoutSurfaces(child)] as const)
+            .filter((entry): entry is readonly [string, QMLNode] => entry[1] !== null)
+        )
+      : undefined
+
+    return {
+      ...node,
+      properties: { ...node.properties },
+      children: node.children.map(cloneWithoutSurfaces).filter((child): child is QMLNode => child !== null),
+      blockProperties,
+      methods: node.methods ? { ...node.methods } : undefined,
+    }
+  }
+
+  return {
+    roots: nodes.map(cloneWithoutSurfaces).filter((node): node is QMLNode => node !== null),
+    surfaces,
+  }
+}
+
 /**
  * Full element style computation:
  * element-specific styles + layout styles + common dimensions
@@ -46,6 +108,26 @@ function nodeClass(type: string): string {
   return `qml-${type.toLowerCase()}`
 }
 
+function toRootCssSize(v: string | undefined): string | undefined {
+  if (!v) return undefined
+  const n = parseFloat(v.replace(/px|pt|dp/gi, '').trim())
+  return isNaN(n) ? undefined : `${n}px`
+}
+
+function hasAlignmentFlag(alignment: string, flag: string): boolean {
+  return alignment.includes(flag) || alignment.includes(`Qt.${flag}`)
+}
+
+function looksLikeBindingExpression(raw?: string): boolean {
+  if (!raw) return false
+  const value = raw.trim()
+  if (!value) return false
+  if (value === 'true' || value === 'false') return false
+  if (/^[-+]?\d+(\.\d+)?$/.test(value)) return false
+  if (/^#?[a-zA-Z_]\w*$/.test(value)) return false
+  return /[+\-*/%()?:=!<>|&]/.test(value) || value.includes('.') || /^['"].*['"]\s*\+/.test(value)
+}
+
 /**
  * Deep-clone a QML node with optional index substitution in property values.
  * Replaces "${index}" tokens with the given number.
@@ -55,6 +137,7 @@ function cloneNodeWithIndex(node: QMLNode, idx: number): QMLNode {
   for (const [k, v] of Object.entries(node.properties)) {
     props[k] = v.replace(/\$\{index\}/g, String(idx))
   }
+  props.__index = String(idx)
   return {
     type: node.type,
     properties: props,
@@ -62,11 +145,90 @@ function cloneNodeWithIndex(node: QMLNode, idx: number): QMLNode {
   }
 }
 
+function cloneNodeWithContext(node: QMLNode, idx: number, row?: ListModelRow): QMLNode {
+  const props: Record<string, string> = {}
+  for (const [k, raw] of Object.entries(node.properties)) {
+    let value = raw.replace(/\$\{index\}/g, String(idx))
+    if (row) {
+      for (const [role, roleVal] of Object.entries(row)) {
+        value = value.replace(new RegExp(`\\$\\{${role}\\}`, 'g'), roleVal)
+      }
+      const trimmed = value.trim()
+      if (trimmed === 'index') {
+        value = String(idx)
+      } else if (trimmed === 'modelData') {
+        value = row.modelData ?? ''
+      } else if (trimmed.startsWith('model.') && row[trimmed.slice(6)] !== undefined) {
+        value = row[trimmed.slice(6)]
+      } else if (row[trimmed] !== undefined) {
+        value = row[trimmed]
+      }
+    }
+    props[k] = value
+  }
+  return {
+    type: node.type,
+    id: node.id,
+    properties: props,
+    children: node.children.map(c => cloneNodeWithContext(c, idx, row)),
+    blockProperties: node.blockProperties
+      ? Object.fromEntries(Object.entries(node.blockProperties).map(([k, n]) => [k, cloneNodeWithContext(n, idx, row)]))
+      : undefined,
+    methods: node.methods ? { ...node.methods } : undefined,
+  }
+}
+
+function collectListModels(nodes: QMLNode[]): ListModelMap {
+  const models: ListModelMap = {}
+
+  const walk = (node: QMLNode) => {
+    if (node.type === 'ListModel' && node.id) {
+      const rows: ListModelRow[] = []
+      for (const child of node.children) {
+        if (child.type !== 'ListElement') continue
+        const row: ListModelRow = {}
+        for (const [k, v] of Object.entries(child.properties)) {
+          row[k] = v
+        }
+        if (row.modelData === undefined) {
+          row.modelData = row.text ?? row.name ?? ''
+        }
+        rows.push(row)
+      }
+      models[node.id] = rows
+    }
+    for (const child of node.children) walk(child)
+    if (node.blockProperties) {
+      for (const blockNode of Object.values(node.blockProperties)) walk(blockNode)
+    }
+  }
+
+  for (const root of nodes) walk(root)
+  return models
+}
+
+function collectComponents(nodes: QMLNode[]): ComponentMap {
+  const components: ComponentMap = {}
+
+  const walk = (node: QMLNode) => {
+    if (node.type === 'Component' && node.id) {
+      components[node.id] = node
+    }
+    for (const child of node.children) walk(child)
+    if (node.blockProperties) {
+      for (const blockNode of Object.values(node.blockProperties)) walk(blockNode)
+    }
+  }
+
+  for (const root of nodes) walk(root)
+  return components
+}
+
 /**
  * Expand ListView content: if blockProperties.delegate exists and model is numeric,
  * generate repeated children.
  */
-function expandListView(node: QMLNode): QMLNode[] {
+function expandListView(node: QMLNode, modelMap: ListModelMap): QMLNode[] {
   if (!node.blockProperties?.delegate) return node.children
 
   const delegate = node.blockProperties.delegate
@@ -82,31 +244,148 @@ function expandListView(node: QMLNode): QMLNode[] {
     return items
   }
 
+  if (modelVal && modelMap[modelVal]) {
+    return modelMap[modelVal].map((row, i) => cloneNodeWithContext(delegate, i, row))
+  }
+
   return node.children
 }
 
-/**
- * Render a single QML node and its children to HTML string
- */
-function renderNode(node: QMLNode, parentType?: string): string {
+function expandRepeater(node: QMLNode, modelMap: ListModelMap): QMLNode[] {
+  if (!node.blockProperties?.delegate) return node.children
+
+  const delegate = node.blockProperties.delegate
+  const modelVal = node.properties.model
+
+  const count = parseInt(modelVal || '', 10)
+  if (!isNaN(count) && count > 0 && count < 5000) {
+    const items: QMLNode[] = []
+    for (let i = 0; i < count; i++) {
+      items.push(cloneNodeWithIndex(delegate, i))
+    }
+    return items
+  }
+
+  if (modelVal && modelVal.startsWith('[') && modelVal.endsWith(']')) {
+    try {
+      const arr = JSON.parse(modelVal)
+      if (Array.isArray(arr)) {
+        return arr.map((_, i) => cloneNodeWithIndex(delegate, i))
+      }
+    } catch {
+      // ignore invalid model JSON
+    }
+  }
+
+  if (modelVal && modelMap[modelVal]) {
+    return modelMap[modelVal].map((row, i) => cloneNodeWithContext(delegate, i, row))
+  }
+
+  return node.children
+}
+
+function expandLoader(node: QMLNode, componentMap: ComponentMap): QMLNode[] {
+  const active = (node.properties.active || 'true').trim()
+  if (active === 'false') return []
+
+  let sourceComponent = node.blockProperties?.sourceComponent
+  if (!sourceComponent && node.properties.sourceComponent) {
+    sourceComponent = componentMap[node.properties.sourceComponent]
+  }
+  if (!sourceComponent) return node.children
+
+  if (sourceComponent.type === 'Component') {
+    return sourceComponent.children
+  }
+
+  return [sourceComponent]
+}
+
+function shouldSkipDirectRender(type: string): boolean {
+  return type === 'ListModel' || type === 'ListElement' || type === 'Connections' || type === 'Component'
+}
+
+function renderNode(node: QMLNode, parentType?: string, modelMap: ListModelMap = {}, componentMap: ComponentMap = {}): string {
+  if (shouldSkipDirectRender(node.type)) {
+    return ''
+  }
   const mapping = ELEMENT_MAP[node.type]
   const styles = computeAllStyles(node)
 
-  // If this is a layout container with no explicit width, fill parent width
-  if (!styles['width'] && (
-    node.type === 'ColumnLayout' || node.type === 'Column' ||
-    node.type === 'RowLayout' || node.type === 'Row'
-  )) {
-    styles['width'] = '100%'
+  const isRowParentLayout = parentType === 'RowLayout' || parentType === 'Row'
+  const isColumnParentLayout = parentType === 'ColumnLayout' || parentType === 'Column'
+  const isFlowLayoutParent = isRowParentLayout || isColumnParentLayout
+  const hasPositioningAnchors = (
+    node.properties['anchors.fill'] !== undefined ||
+    node.properties['anchors.left'] !== undefined ||
+    node.properties['anchors.right'] !== undefined ||
+    node.properties['anchors.top'] !== undefined ||
+    node.properties['anchors.bottom'] !== undefined ||
+    node.properties['anchors.horizontalCenter'] !== undefined ||
+    node.properties['anchors.verticalCenter'] !== undefined ||
+    node.properties['anchors.centerIn'] !== undefined
+  )
+  const hasX = node.properties.x !== undefined
+  const hasY = node.properties.y !== undefined
+  const useFlowOffset = isFlowLayoutParent && styles['position'] === 'absolute' && !hasPositioningAnchors && (hasX || hasY)
+
+  if (useFlowOffset) {
+    delete styles['position']
+    delete styles['left']
+    delete styles['top']
+    delete styles['right']
+    delete styles['bottom']
+    delete styles['inset']
+    if (hasX) styles['margin-left'] = `${parseFloat(node.properties.x || '0') || 0}px`
+    if (hasY) styles['margin-top'] = `${parseFloat(node.properties.y || '0') || 0}px`
   }
 
-  // If parent is a flex layout (ColumnLayout/Column/RowLayout/Row),
-  // force width:100% on children so they fill the layout
-  const isFlexParent = parentType === 'ColumnLayout' || parentType === 'Column' ||
-                       parentType === 'RowLayout' || parentType === 'Row'
-  if (isFlexParent && !styles['width']) {
-    styles['width'] = '100%'
+  const alignmentRaw = node.properties['Layout.alignment']
+  if (alignmentRaw && !styles['position']) {
+    const alignment = alignmentRaw.replace(/\s+/g, '')
+    const alignHCenter = hasAlignmentFlag(alignment, 'AlignHCenter') || hasAlignmentFlag(alignment, 'AlignCenter')
+    const alignVCenter = hasAlignmentFlag(alignment, 'AlignVCenter') || hasAlignmentFlag(alignment, 'AlignCenter')
+    const alignLeft = hasAlignmentFlag(alignment, 'AlignLeft')
+    const alignRight = hasAlignmentFlag(alignment, 'AlignRight')
+    const alignTop = hasAlignmentFlag(alignment, 'AlignTop')
+    const alignBottom = hasAlignmentFlag(alignment, 'AlignBottom')
+
+    const isRowParent = isRowParentLayout
+    const isColumnParent = isColumnParentLayout
+
+    if (isRowParent) {
+      if (alignBottom) styles['align-self'] = 'flex-end'
+      else if (alignVCenter) styles['align-self'] = 'center'
+      else if (alignTop) styles['align-self'] = 'flex-start'
+
+      if (alignRight) {
+        styles['margin-left'] = 'auto'
+        styles['margin-right'] = '0'
+      } else if (alignHCenter) {
+        styles['margin-left'] = 'auto'
+        styles['margin-right'] = 'auto'
+      } else if (alignLeft) {
+        styles['margin-right'] = 'auto'
+      }
+    }
+
+    if (isColumnParent) {
+      if (alignRight) styles['align-self'] = 'flex-end'
+      else if (alignHCenter) styles['align-self'] = 'center'
+      else if (alignLeft) styles['align-self'] = 'flex-start'
+
+      if (alignBottom) {
+        styles['margin-top'] = 'auto'
+        styles['margin-bottom'] = '0'
+      } else if (alignVCenter) {
+        styles['margin-top'] = 'auto'
+        styles['margin-bottom'] = 'auto'
+      } else if (alignTop) {
+        styles['margin-bottom'] = 'auto'
+      }
+    }
   }
+
   const styleStr = stylesToString(styles)
   const cls = nodeClass(node.type)
   const idAttr = node.id ? ` id="${escapeHTML(node.id)}"` : ''
@@ -120,10 +399,43 @@ function renderNode(node: QMLNode, parentType?: string): string {
       .join(' ')
   }
 
+  const signalAttrs = Object.entries(node.properties)
+    .filter(([k]) => /^on[A-Z]/.test(k))
+    .map(([k, v]) => {
+      const signalName = k.slice(2).toLowerCase()
+      return `data-qml-on${signalName}="${escapeAttr(v)}"`
+    })
+  if (signalAttrs.length > 0) {
+    extraAttrStr += (extraAttrStr ? ' ' : ' ') + signalAttrs.join(' ')
+  }
+
+  const runtimeAttrs: string[] = []
+  if (useFlowOffset) {
+    runtimeAttrs.push('data-qml-flow-pos="true"')
+  }
+  if ((node.type === 'ListView' || node.type === 'Repeater') && node.blockProperties?.delegate) {
+    const modelRef = (node.properties.model || '').trim()
+    if (modelRef && !/^\d+$/.test(modelRef) && !(modelRef.startsWith('[') && modelRef.endsWith(']'))) {
+      runtimeAttrs.push(`data-qml-model-ref="${escapeAttr(modelRef)}"`)
+      runtimeAttrs.push(`data-qml-view-type="${node.type.toLowerCase()}"`)
+      const delegateText = node.blockProperties.delegate.properties?.text || ''
+      runtimeAttrs.push(`data-qml-delegate-text="${escapeAttr(delegateText)}"`)
+      runtimeAttrs.push(`data-qml-delegate-item="${escapeAttr(node.blockProperties.delegate.type)}"`)
+    }
+  }
+  if (runtimeAttrs.length > 0) {
+    extraAttrStr += (extraAttrStr ? ' ' : ' ') + runtimeAttrs.join(' ')
+  }
+
+  if (node.properties.text && looksLikeBindingExpression(node.properties.text)) {
+    extraAttrStr += `${extraAttrStr ? ' ' : ' '}data-qml-bind-text="${escapeAttr(node.properties.text)}"`
+  }
+
   // Determine tag to use
   const tag = mapping?.tag || 'div'
   const isInput = tag === 'input'
   const isTextarea = tag === 'textarea'
+  const isDialog = node.type === 'Dialog'
 
   // Start the element tag
   let html: string
@@ -141,6 +453,11 @@ function renderNode(node: QMLNode, parentType?: string): string {
     return html
   }
 
+  if (isDialog) {
+    const title = displayProperty(node.properties.title) || node.id || 'Dialog'
+    html += `<div class="qml-dialog-titlebar"><div class="qml-dialog-title">${escapeHTML(title)}</div></div><div class="qml-dialog-content">`
+  }
+
   if (isInput) {
     // Self-closing, no content or children
     return html
@@ -154,8 +471,12 @@ function renderNode(node: QMLNode, parentType?: string): string {
     html += escapeHTML(node.properties.text)
   }
 
+  const isWindowRootType = node.type === 'Window' || node.type === 'ApplicationWindow'
+  const headerNode = isWindowRootType ? node.blockProperties?.header : undefined
+  const footerNode = isWindowRootType ? node.blockProperties?.footer : undefined
+
   // Render children
-  if (node.children.length > 0 || (node.type === 'ListView' && node.blockProperties?.delegate)) {
+  if (node.children.length > 0 || (node.type === 'ListView' && node.blockProperties?.delegate) || (node.type === 'Repeater' && node.blockProperties?.delegate) || (node.type === 'Loader' && (node.blockProperties?.sourceComponent || node.properties.sourceComponent)) || headerNode || footerNode) {
     // Determine if parent is a layout type — needed by children for auto-stretch
     const layoutParent = (
       node.type === 'ColumnLayout' || node.type === 'Column' ||
@@ -164,11 +485,43 @@ function renderNode(node: QMLNode, parentType?: string): string {
 
     // For ListView, expand delegate+model into children
     const effectiveChildren = node.type === 'ListView'
-      ? expandListView(node)
-      : node.children
+      ? expandListView(node, modelMap)
+      : node.type === 'Repeater'
+        ? expandRepeater(node, modelMap)
+        : node.type === 'Loader'
+          ? expandLoader(node, componentMap)
+          : node.children
 
-    for (const child of effectiveChildren) {
-      html += renderNode(child, layoutParent)
+    if (headerNode || footerNode) {
+      const headerHeight = headerNode ? 32 : 0
+      const footerHeight = footerNode ? 32 : 0
+
+      if (headerNode) {
+        html += `<div style="position:absolute; top:0; left:0; right:0; height:${headerHeight}px; z-index:2;">${renderNode(headerNode, undefined, modelMap, componentMap)}</div>`
+      }
+      if (footerNode) {
+        html += `<div style="position:absolute; left:0; right:0; bottom:0; height:${footerHeight}px; z-index:2;">${renderNode(footerNode, undefined, modelMap, componentMap)}</div>`
+      }
+
+      html += `<div style="position:absolute; top:${headerHeight}px; left:0; right:0; bottom:${footerHeight}px; overflow:hidden;">`
+      for (const child of effectiveChildren) {
+        html += renderNode(child, layoutParent, modelMap, componentMap)
+      }
+      html += `</div>`
+    } else {
+      for (const child of effectiveChildren) {
+        html += renderNode(child, layoutParent, modelMap, componentMap)
+      }
+    }
+  }
+
+  if (isDialog) {
+    html += `</div>`
+    const buttons = dialogButtons(node.properties.standardButtons)
+    if (buttons.length > 0) {
+      html += `<div class="qml-dialog-footer">${buttons.map(button =>
+        `<button type="button" class="qml-dialog-button${button.primary ? ' is-primary' : ''}" data-qml-dialog-action="${button.action}" data-qml-dialog-id="${escapeAttr(node.id || '')}">${escapeHTML(button.label)}</button>`
+      ).join('')}</div>`
     }
   }
 
@@ -177,18 +530,8 @@ function renderNode(node: QMLNode, parentType?: string): string {
 }
 
 /**
- * Convert QML dimension value to CSS pixel string (e.g. "900" → "900px").
- * Returns undefined if the value is empty or non-numeric.
- */
-function winSize(v: string | undefined): string | undefined {
-  if (!v) return undefined
-  const n = parseFloat(v.replace(/px|pt|dp/gi, '').trim())
-  return isNaN(n) ? undefined : `${n}px`
-}
-
-/**
  * Render a complete QML document to an HTML string.
- * Supports Window type by extracting its content and properties.
+ * Renders all root nodes using the same layout path.
  */
 export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): string {
   if (nodes.length === 0) {
@@ -198,7 +541,6 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
   const bgColor = isLight ? '#ffffff' : '#1e1e1e'
   const textColor = isLight ? '#000000' : '#cccccc'
 
-  // If the root is a Window, extract its content
   let bodyStyles: StyleMap = {
     'margin': '0',
     'overflow': 'hidden',
@@ -207,70 +549,64 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
     'background': bgColor,
     'color': textColor,
     'font-family': '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    'direction': 'ltr',
   }
 
-  let innerHTML = ''
+  let rootHTML = ''
   let windowTitle = 'QML Preview'
+  const rootNode = nodes[0]
+  const { roots: previewRoots, surfaces: previewSurfaces } = splitPreviewSurfaces(nodes)
+  const stageStyles: StyleMap = {
+    'position': 'relative',
+    'display': 'inline-block',
+    'vertical-align': 'top',
+    'margin': '0',
+    'top': '0',
+    'left': '0',
+  }
 
-  for (const node of nodes) {
+  if (rootNode) {
+    const rootWidth = toRootCssSize(rootNode.properties?.width)
+    const rootHeight = toRootCssSize(rootNode.properties?.height)
+    if (rootWidth) stageStyles['width'] = rootWidth
+    if (rootHeight) stageStyles['height'] = rootHeight
+  }
+  const rootHasExplicitWidth = !!stageStyles['width']
+  const rootHasExplicitHeight = !!stageStyles['height']
+
+  const modelMap = collectListModels(nodes)
+  const componentMap = collectComponents(nodes)
+
+  for (const node of previewRoots) {
     if (node.type === 'Window' || node.type === 'ApplicationWindow') {
       windowTitle = node.properties.title || 'QML Preview'
-      // Apply window background color if set
       if (node.properties.color) {
         bodyStyles['background'] = node.properties.color
       }
-
-      // Use specified window dimensions for a centered window simulation
-      const winW = winSize(node.properties.width)
-      const winH = winSize(node.properties.height)
-
-      // Body uses flexbox to center the window in the preview panel
-      bodyStyles['display'] = 'flex'
-      bodyStyles['justify-content'] = 'center'
-      bodyStyles['align-items'] = 'center'
-
-      // Allow body to scroll when the window is larger than the preview panel
-      if (winW || winH) {
-        bodyStyles['overflow'] = 'auto'
-      }
-
-      const wStyle = winW || '100%'
-      const hStyle = winH || '100%'
-
-      innerHTML += `<div class="qml-window" style="position:relative; width:${wStyle}; height:${hStyle}; overflow:hidden;">`
-
-      // Render header block-property (MenuBar, ToolBar) at the top
-      const hasHeader = !!node.blockProperties?.header
-      if (hasHeader) {
-        const headerNode = node.blockProperties!.header
-        const headerHTML = renderNode(headerNode)
-        innerHTML += headerHTML
-
-        // Open a content container below the header, so children with
-        // position:absolute (anchors.fill) do not overlap the header
-        innerHTML += `<div style="position:absolute; top:32px; left:0; right:0; bottom:0; overflow:hidden;">`
-      }
-
-      // Get window's children
-      for (const child of node.children) {
-        innerHTML += renderNode(child)
-      }
-
-      // Close content container if we opened one
-      if (hasHeader) {
-        innerHTML += `</div>`
-      }
-      innerHTML += '</div>'
-    } else {
-      // Top-level non-Window element
-      innerHTML += renderNode(node)
     }
+    rootHTML += renderNode(node, undefined, modelMap, componentMap)
   }
 
-  const bodyStyleStr = stylesToString(bodyStyles)
-  const escapedTitle = escapeHTML(windowTitle)
+  const hasPreviewTabs = previewSurfaces.length > 0
+  const rootTabLabel = rootNode?.type || 'Root'
+  const tabButtons = hasPreviewTabs
+    ? `<div class="qml-preview-tabs" role="tablist">` +
+      `<button class="qml-preview-tab is-active" type="button" role="tab" aria-selected="true" data-preview-tab="root">${escapeHTML(rootTabLabel)}</button>` +
+      previewSurfaces.map(surface => `<button class="qml-preview-tab" type="button" role="tab" aria-selected="false" data-preview-tab="${escapeAttr(surface.key)}">${escapeHTML(surface.label)}</button>`).join('') +
+      `</div>`
+    : ''
+  const rootPanel = `<div class="qml-preview-panel is-active" data-preview-panel="root"><div class="qml-preview-root"><div class="qml-preview-stage" style="${stylesToString(stageStyles)}">${rootHTML}</div></div></div>`
+  const surfacePanels = previewSurfaces.map(surface =>
+    `<div class="qml-preview-panel qml-preview-component-panel qml-preview-${surface.node.type.toLowerCase()}-panel" data-preview-panel="${escapeAttr(surface.key)}"><div class="qml-preview-root"><div class="qml-preview-component">${renderNode(surface.node, undefined, modelMap, componentMap)}</div></div></div>`
+  ).join('')
+  const previewHTML = `<div class="qml-preview-shell${hasPreviewTabs ? ' has-tabs' : ''}">${tabButtons}<div class="qml-preview-panels">${rootPanel}${surfacePanels}</div></div>`
 
-  return `<!DOCTYPE html>
+  const bodyStyleStr = stylesToString(bodyStyles)
+  const stageStyleStr = stylesToString(stageStyles)
+  const escapedTitle = escapeHTML(windowTitle)
+  const astPayload = JSON.stringify(nodes).replace(/</g, '\\u003c')
+
+  return String.raw`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -280,6 +616,60 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body { width:100%; height:100%; overflow:hidden; }
   body { ${bodyStyleStr} }
+  .qml-preview-root {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    position: relative;
+    direction: ltr;
+    scrollbar-width: auto;
+  }
+  .qml-preview-root::-webkit-scrollbar:vertical {
+    width: 0;
+  }
+  .qml-preview-root::-webkit-scrollbar:horizontal {
+    height: 10px;
+  }
+  .qml-preview-shell { width:100%; height:100%; display:flex; flex-direction:column; overflow:hidden; }
+  .qml-preview-tabs {
+    flex:0 0 auto; display:flex; min-height:34px; overflow-x:auto; overflow-y:hidden;
+    border-bottom:1px solid var(--qml-control-border); background:var(--qml-menubar-bg);
+  }
+  .qml-preview-tab {
+    flex:0 0 auto; min-width:88px; height:34px; padding:0 14px; border:0;
+    border-right:1px solid var(--qml-control-border); border-bottom:2px solid transparent;
+    color:var(--qml-muted-text); background:transparent; font:inherit; cursor:pointer;
+  }
+  .qml-preview-tab:hover { background:var(--qml-combo-dd-hover-bg); color:var(--qml-control-text); }
+  .qml-preview-tab.is-active { color:var(--qml-control-text); border-bottom-color:var(--qml-accent); background:var(--qml-control-bg); }
+  .qml-preview-panels { position:relative; flex:1 1 auto; min-height:0; overflow:hidden; }
+  .qml-preview-panel { display:none; position:absolute; inset:0; }
+  .qml-preview-panel.is-active { display:block; }
+  .qml-preview-component-panel .qml-preview-root { display:flex; align-items:center; justify-content:center; padding:24px; }
+  .qml-preview-dialog-panel .qml-preview-root, .qml-preview-popup-panel .qml-preview-root { align-items:flex-start; justify-content:flex-start; }
+  .qml-preview-component { position:relative; max-width:100%; max-height:100%; }
+  .qml-preview-component > .qml-dialog { display:flex !important; flex-direction:column; margin:0 !important; }
+  .qml-preview-component > .qml-popup { display:block !important; margin:0 !important; }
+  .qml-dialog-titlebar {
+    flex:0 0 auto; min-height:44px; display:flex; align-items:center; padding:0 18px;
+    border-bottom:1px solid var(--qml-control-border); background:var(--qml-menubar-bg);
+  }
+  .qml-dialog-title { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:15px; font-weight:600; }
+  .qml-dialog-content { position:relative; flex:1 1 auto; min-height:72px; padding:20px; overflow:auto; }
+  .qml-dialog-footer {
+    flex:0 0 auto; min-height:56px; display:flex; align-items:center; justify-content:flex-end;
+    gap:8px; padding:10px 14px; border-top:1px solid var(--qml-control-border); background:var(--qml-menubar-bg);
+  }
+  .qml-dialog-button {
+    min-width:76px; height:32px; padding:0 16px; border:1px solid var(--qml-control-border);
+    border-radius:4px; color:var(--qml-control-text); background:var(--qml-btn-bg); font:inherit; cursor:pointer;
+  }
+  .qml-dialog-button:hover { background:var(--qml-btn-hover-bg); }
+  .qml-dialog-button.is-primary { color:#fff; border-color:var(--qml-accent); background:var(--qml-accent); }
+  .qml-dialog-button:focus-visible { outline:2px solid var(--qml-accent); outline-offset:2px; }
+  .qml-preview-stage {
+    position: relative;
+  }
   :root {
     --qml-control-bg: ${isLight ? '#ffffff' : '#2d2d2d'};
     --qml-control-text: ${isLight ? '#333333' : '#cccccc'};
@@ -297,31 +687,843 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
     --qml-combo-dd-hover-bg: ${isLight ? '#f0f0f0' : '#3a3a3a'};
     --qml-combo-dd-sel-bg: ${isLight ? '#e8e8e8' : '#3a3a3a'};
     --qml-menubar-bg: ${isLight ? '#f0f0f0' : '#252525'};
+    --qml-table-header-bg: ${isLight ? '#e8eaed' : '#343434'};
+    --qml-table-header-hover: ${isLight ? '#dce2e8' : '#414141'};
+    --qml-table-header-active: ${isLight ? '#d2dbe4' : '#484848'};
+    --qml-table-header-border: ${isLight ? '#aeb4ba' : '#686868'};
     --qml-text-color: ${isLight ? '#000000' : '#cccccc'};
     --qml-list-border: ${isLight ? '#e0e0e0' : '#444'};
     --qml-item-border: ${isLight ? '#f0f0f0' : '#333'};
     --qml-spinner-border: ${isLight ? '#e0e0e0' : '#444'};
     --qml-dialog-bg: ${isLight ? 'white' : '#2d2d2d'};
     --qml-dialog-shadow: ${isLight ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.5)'};
+    --qml-window-bg: ${isLight ? '#ffffff' : '#252525'};
+    --qml-window-border: ${isLight ? '#8a8a8a' : '#666666'};
+    --qml-window-shadow: ${isLight ? 'rgba(0,0,0,0.18)' : 'rgba(0,0,0,0.45)'};
     --qml-menubar-border: ${isLight ? '#ddd' : '#444'};
   }
   .qml-node { position:relative; }
+  .qml-swipeview > .qml-node, .qml-stackview > .qml-node {
+    position: absolute !important;
+    inset: 0;
+    width: 100% !important;
+    height: 100% !important;
+  }
   @keyframes qml-spin { to { transform: rotate(360deg); } }
   [data-qml-type="button"]:hover { background:var(--qml-btn-hover-bg) !important; }
   [data-qml-type="roundbutton"]:hover { background:var(--qml-btn-hover-bg) !important; }
   [data-qml-type="toolbutton"]:hover { background:var(--qml-combo-dd-hover-bg) !important; }
   [data-qml-type="menu"]:hover { background:var(--qml-combo-dd-hover-bg) !important; }
   [data-qml-type="tabbutton"]:hover { background:var(--qml-combo-dd-hover-bg); }
+  .qml-table-header:hover { background:var(--qml-table-header-hover) !important; }
+  .qml-table-header:focus-visible { outline:2px solid var(--qml-accent); outline-offset:-2px; z-index:3; }
+  .qml-table-header[data-qml-sorted="true"] { background:var(--qml-table-header-active) !important; }
+  .qml-table-resizer:hover { background:var(--qml-accent); }
   [data-qml-type="checkbox"]:hover span:first-child { color:var(--qml-accent); }
   [data-qml-type="radio"]:hover span:first-child { color:var(--qml-accent); }
 </style>
 </head>
 <body>
-${innerHTML}
+${previewHTML}
 <script>
 try {
 (function(){
+var QML_AST=${astPayload};
+var previewRoot=document.querySelector('[data-preview-panel="root"] .qml-preview-root');
+var stageEl=document.querySelector('[data-preview-panel="root"] .qml-preview-stage');
+if(previewRoot){
+  previewRoot.scrollLeft=0;
+  previewRoot.scrollTop=0;
+  requestAnimationFrame(function(){
+    previewRoot.scrollLeft=0;
+    previewRoot.scrollTop=0;
+  });
+}
+if(stageEl){
+  var rootNodeEl=stageEl.querySelector(':scope > .qml-node')||stageEl.firstElementChild;
+  if(rootNodeEl){
+    var hasRootWidth=${rootHasExplicitWidth ? 'true' : 'false'};
+    var hasRootHeight=${rootHasExplicitHeight ? 'true' : 'false'};
+    if(!hasRootWidth){
+      var naturalWidth=Math.max(rootNodeEl.scrollWidth||0, rootNodeEl.offsetWidth||0);
+      if(naturalWidth>0){stageEl.style.width=naturalWidth+'px';}
+    }
+    if(!hasRootHeight){
+      var naturalHeight=Math.max(rootNodeEl.scrollHeight||0, rootNodeEl.offsetHeight||0);
+      if(naturalHeight>0){stageEl.style.height=naturalHeight+'px';}
+    }
+  }
+}
 var S={};
+var Runtime={ids:{},methods:{},connections:[],stateDefs:{},bindings:[],modelDefs:{},modelViews:{},domTextBindings:[],booting:true,applying:false};
+var Qt={
+  AlignLeft:1,AlignRight:2,AlignHCenter:4,AlignTop:8,AlignBottom:16,AlignVCenter:32,AlignCenter:36,
+  Checked:true,Unchecked:false,
+}
+
+document.addEventListener('click',function(event){
+  var button=event.target.closest('[data-qml-dialog-action]');
+  if(!button)return;
+  var dialogId=button.getAttribute('data-qml-dialog-id')||'';
+  var action=button.getAttribute('data-qml-dialog-action')||'reject';
+  var dialog=dialogId?Runtime.ids[dialogId]:null;
+  if(dialog&&typeof dialog[action]==='function')dialog[action]();
+  else activatePreviewTab('root');
+});
+
+function activatePreviewTab(key){
+  var selected=String(key||'root');
+  var panel=document.querySelector('[data-preview-panel="'+selected+'"]');
+  if(!panel)selected='root';
+  document.querySelectorAll('.qml-preview-tab').forEach(function(tab){
+    var active=tab.getAttribute('data-preview-tab')===selected;
+    tab.classList.toggle('is-active',active);
+    tab.setAttribute('aria-selected',String(active));
+  });
+  document.querySelectorAll('.qml-preview-panel').forEach(function(item){
+    item.classList.toggle('is-active',item.getAttribute('data-preview-panel')===selected);
+  });
+}
+
+document.querySelectorAll('.qml-preview-tab').forEach(function(tab){
+  tab.addEventListener('click',function(){activatePreviewTab(tab.getAttribute('data-preview-tab')||'root');});
+});
+
+function normalizeHandlerCode(code){
+  if(!code)return '';
+  var c=String(code).trim();
+  if(c[0]==='{'&&c[c.length-1]==='}'){
+    c=c.slice(1,-1);
+  }
+  return c;
+}
+
+function coerceLiteral(value){
+  if(typeof value!=='string')return value;
+  var v=value.trim();
+  if(v==='true')return true;
+  if(v==='false')return false;
+  if(/^[0-9]+(\.[0-9]+)?$/.test(v) || /^[+-][0-9]+(\.[0-9]+)?$/.test(v))return parseFloat(v);
+  if((v.startsWith('"')&&v.endsWith('"'))||(v.startsWith("'")&&v.endsWith("'"))){
+    return v.slice(1,-1);
+  }
+  return value;
+}
+
+function extractBlocks(source, keyword){
+  var out=[];
+  var i=0;
+  while(i<source.length){
+    var at=source.indexOf(keyword, i);
+    if(at<0)break;
+    var open=source.indexOf('{', at+keyword.length);
+    if(open<0)break;
+    var depth=1;
+    var cur=open+1;
+    while(cur<source.length&&depth>0){
+      var ch=source[cur];
+      if(ch==='{')depth++;
+      else if(ch==='}')depth--;
+      cur++;
+    }
+    if(depth===0){
+      out.push(source.slice(open+1,cur-1));
+      i=cur;
+    }else{
+      break;
+    }
+  }
+  return out;
+}
+
+function escHtml(value){
+  return String(value)
+    .replace(/&/g,'&amp;')
+    .replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;');
+}
+
+function isExpressionLike(expr){
+  if(!expr)return false;
+  var v=String(expr).trim();
+  if(!v)return false;
+  if(v==='true'||v==='false')return false;
+  if(/^[0-9]+(\.[0-9]+)?$/.test(v) || /^[+-][0-9]+(\.[0-9]+)?$/.test(v))return false;
+  if(/^#?[a-zA-Z][a-zA-Z0-9_.]*$/.test(v))return true;
+  var ops='+-*/%()?:=!<>|&';
+  for(var i=0;i<v.length;i++){
+    if(ops.indexOf(v.charAt(i))>=0)return true;
+  }
+  return v.indexOf('.')>=0;
+}
+
+function evalExpr(expr, extraScope){
+  var source=String(expr||'').trim();
+  if(!source)return undefined;
+  var scope=Object.assign({Math:Math,Qt:Qt,S:S},Runtime.methods,Runtime.ids,extraScope||{});
+  try{
+    return Function('scope','with(scope){ return ('+source+'); }')(scope);
+  }catch(_e){
+    return source;
+  }
+}
+
+function execCode(code, extraScope){
+  var source=normalizeHandlerCode(code);
+  if(!source)return;
+  var scope=Object.assign({Math:Math,Qt:Qt,S:S},Runtime.methods,Runtime.ids,extraScope||{});
+  try{
+    return Function('scope','with(scope){ '+source+' }')(scope);
+  }catch(_e){
+    return;
+  }
+}
+
+function setDomProp(id, prop, value){
+  var el=document.getElementById(id);
+  if(!el)return;
+  switch(prop){
+    case 'text':{
+      var textNode=el.querySelector('.qml-cb-text');
+      if(textNode){textNode.textContent=String(value);}else{el.textContent=String(value);}
+      break;
+    }
+    case 'checked':{
+      var on=!!value;
+      if(el.getAttribute('data-qml-type')==='checkbox'){
+        el.setAttribute('data-qml-checked',String(on));
+        var marker=el.querySelector('.qml-cb-marker');
+        if(marker)marker.textContent=on?'✓':'☐';
+      }else if(el.getAttribute('data-qml-type')==='switch'){
+        el.setAttribute('data-qml-checked',String(on));
+        var track=el.firstElementChild;
+        if(track){
+          track.style.background=on?'var(--qml-switch-on,#4cd964)':'var(--qml-switch-off)';
+          var thumb=track.firstElementChild;
+          if(thumb){thumb.style.right=on?'2px':'auto';thumb.style.left=on?'auto':'2px';}
+        }
+      }
+      break;
+    }
+    case 'value':{
+      if(el.getAttribute('data-qml-type')==='slider'){
+        var from=parseFloat(el.getAttribute('data-qml-from')||'0');
+        var to=parseFloat(el.getAttribute('data-qml-to')||'100');
+        var n=parseFloat(String(value));
+        if(!isNaN(n)&&to!==from){
+          var pct=Math.max(0,Math.min(100,((n-from)/(to-from))*100));
+          el.setAttribute('data-qml-value',String(n));
+          var fill=el.querySelector('.qml-slider-fill');
+          var thumb=el.querySelector('.qml-slider-thumb');
+          if(fill){fill.style.width=pct+'%';}
+          if(thumb){thumb.style.left='calc('+pct+'% - 7px)';}
+        }
+      }
+      break;
+    }
+    case 'currentIndex':{
+      var idx=parseInt(String(value),10);
+      if(isNaN(idx))idx=0;
+      el.setAttribute('data-qml-currentindex',String(idx));
+      if(el.classList.contains('qml-tabbar')){
+        var kids=Array.prototype.filter.call(el.children,function(c){return c.getAttribute&&c.getAttribute('data-qml-type')==='tabbutton';});
+        kids.forEach(function(c,i){
+          c.style.borderBottom=i===idx?'2px solid var(--qml-accent)':'2px solid transparent';
+          c.style.color=i===idx?'var(--qml-text-color)':'var(--qml-muted-text)';
+        });
+        var stack=el.nextElementSibling;
+        while(stack&&!stack.classList.contains('qml-stacklayout')){stack=stack.nextElementSibling;}
+        if(stack){
+          var panels=Array.prototype.filter.call(stack.children,function(c){return c.classList.contains('qml-node');});
+          panels.forEach(function(p,i){p.style.display=i===idx?'':'none';});
+        }
+      }
+      if(el.classList.contains('qml-stacklayout')){
+        var panels=Array.prototype.filter.call(el.children,function(c){return c.classList.contains('qml-node');});
+        panels.forEach(function(p,i){p.style.display=i===idx?'':'none';});
+      }
+      if(el.classList.contains('qml-swipeview')||el.classList.contains('qml-stackview')){
+        var pages=Array.prototype.filter.call(el.children,function(c){return c.classList.contains('qml-node');});
+        pages.forEach(function(p,i){p.style.display=i===idx?'':'none';});
+      }
+      break;
+    }
+    case 'x': {
+      var xv=parseFloat(String(value));
+      if(!isNaN(xv)){
+        if(el.getAttribute('data-qml-flow-pos')==='true')el.style.marginLeft=xv+'px';
+        else el.style.left=xv+'px';
+      }
+      break;
+    }
+    case 'y': {
+      var yv=parseFloat(String(value));
+      if(!isNaN(yv)){
+        if(el.getAttribute('data-qml-flow-pos')==='true')el.style.marginTop=yv+'px';
+        else el.style.top=yv+'px';
+      }
+      break;
+    }
+    case 'width': { var wv=parseFloat(String(value)); if(!isNaN(wv))el.style.width=wv+'px'; break; }
+    case 'height': { var hv=parseFloat(String(value)); if(!isNaN(hv))el.style.height=hv+'px'; break; }
+    case 'color': el.style.background=String(value); break;
+    case 'visible': el.style.display=value===false||value==='false'?'none':''; break;
+    case 'opacity': el.style.opacity=String(value); break;
+    case 'active':
+      if(el.getAttribute('data-qml-loader')==='true'){
+        var on=!(value===false||value==='false'||value===0||value==='0');
+        var tpl=el.getAttribute('data-qml-loader-template')||'';
+        if(on){
+          if(!el.innerHTML&&tpl){el.innerHTML=tpl;}
+          el.style.display='';
+        }else{
+          el.setAttribute('data-qml-loader-template', tpl||el.innerHTML||'');
+          el.innerHTML='';
+          el.style.display='none';
+        }
+      }
+      break;
+    case 'state': applyState(id, String(value)); break;
+  }
+}
+
+function parseStates(statesRaw){
+  if(!statesRaw)return [];
+  var states=[];
+  var stateBodies=extractBlocks(String(statesRaw),'State');
+  stateBodies.forEach(function(body){
+    var nm=(body.match(/name\s*:\s*["']([^"']+)["']/)||body.match(/name\s*:\s*([^\n;\r]+)/));
+    var stateName=nm?String(nm[1]).trim():'';
+    var whenMatch=(body.match(/when\s*:\s*([^\n;\r]+)/)||[])[1];
+    var changes=[];
+    var pcs=extractBlocks(body,'PropertyChanges');
+    pcs.forEach(function(pc){
+      var tm=pc.match(/target\s*:\s*([A-Za-z_]\w*)/);
+      if(!tm)return;
+      var target=tm[1];
+      var props={};
+      var lineRe=/([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*:\s*([^\n;\r]+)/g;
+      var lm;
+      while((lm=lineRe.exec(pc))){
+        if(lm[1]==='target')continue;
+        props[lm[1]]=String(lm[2]).trim();
+      }
+      changes.push({target:target,props:props});
+    });
+    states.push({name:stateName,when:whenMatch?String(whenMatch).trim():'',changes:changes});
+  });
+  return states;
+}
+
+function parseTransition(transRaw){
+  if(!transRaw)return null;
+  var raw=String(transRaw);
+  var animBlocks=[];
+  ['NumberAnimation','ColorAnimation','PropertyAnimation'].forEach(function(kind){
+    animBlocks=animBlocks.concat(extractBlocks(raw,kind));
+  });
+
+  var parseAnim=function(body){
+    var d=(body.match(/duration\s*:\s*(\d+)/)||[])[1];
+    var p=(body.match(/properties\s*:\s*["']([^"']+)["']/)||body.match(/property\s*:\s*["']([^"']+)["']/)||[])[1];
+    return {
+      duration:d?parseInt(d,10):200,
+      properties:p?String(p).split(',').map(function(x){return x.trim();}).filter(Boolean):['all'],
+    };
+  };
+
+  var totalDuration=0;
+  var mergedProps=[];
+  if(raw.indexOf('SequentialAnimation')>=0){
+    animBlocks.forEach(function(b){
+      var a=parseAnim(b);
+      totalDuration+=a.duration;
+      mergedProps=mergedProps.concat(a.properties);
+    });
+  }else{
+    var maxDuration=0;
+    animBlocks.forEach(function(b){
+      var a=parseAnim(b);
+      if(a.duration>maxDuration)maxDuration=a.duration;
+      mergedProps=mergedProps.concat(a.properties);
+    });
+    totalDuration=maxDuration||200;
+  }
+
+  if(animBlocks.length===0){
+    var d0=(raw.match(/duration\s*:\s*(\d+)/)||[])[1];
+    var p0=(raw.match(/properties\s*:\s*["']([^"']+)["']/)||raw.match(/property\s*:\s*["']([^"']+)["']/)||[])[1];
+    return {
+      duration:d0?parseInt(d0,10):200,
+      properties:p0?String(p0).split(',').map(function(x){return x.trim();}).filter(Boolean):['all'],
+    };
+  }
+
+  var uniqProps=Array.from(new Set(mergedProps.filter(Boolean)));
+  return {duration:totalDuration||200,properties:uniqProps.length?uniqProps:['all']};
+}
+
+function applyState(ownerId, stateName){
+  var def=Runtime.stateDefs[ownerId];
+  if(!def)return;
+  var st=def.states.find(function(s){return s.name===stateName;});
+  if(!st)return;
+  st.changes.forEach(function(change){
+    var targetObj=Runtime.ids[change.target];
+    if(!targetObj)return;
+    var targetEl=document.getElementById(change.target);
+    if(targetEl&&def.transition){
+      var tProps='all';
+      if(def.transition.properties[0]!=='all'){
+        var mapped=def.transition.properties.map(function(p){
+          var prop=String(p||'').trim();
+          if(prop==='x')return targetEl.getAttribute('data-qml-flow-pos')==='true'?'margin-left':'left';
+          if(prop==='y')return targetEl.getAttribute('data-qml-flow-pos')==='true'?'margin-top':'top';
+          if(prop==='color')return 'background';
+          return prop;
+        }).filter(Boolean);
+        tProps=Array.from(new Set(mapped)).join(',')||'all';
+      }
+      targetEl.style.transition=tProps+' '+def.transition.duration+'ms ease';
+    }
+    Object.keys(change.props).forEach(function(prop){
+      var v=evalExpr(change.props[prop], Runtime.ids[change.target]);
+      targetObj[prop]=v;
+    });
+  });
+}
+
+function emitSignal(sourceId, signalName, payload){
+  Runtime.connections.forEach(function(c){
+    if(c.target!==sourceId)return;
+    if(c.signal!==signalName)return;
+    execCode(c.code, Object.assign({event:payload||null}, Runtime.ids[sourceId]||{}));
+  });
+  if(!Runtime.booting && !Runtime.applying){
+    applyBindings();
+  }
+}
+
+function applyBindings(){
+  if(Runtime.booting || Runtime.applying)return;
+  Runtime.applying=true;
+  Runtime.bindings.forEach(function(b){
+    var obj=Runtime.ids[b.id];
+    if(!obj)return;
+    var val=evalExpr(b.expr, obj);
+    if(val!==undefined){
+      obj[b.prop]=val;
+    }
+  });
+  (Runtime.domTextBindings||[]).forEach(function(item){
+    if(!item||!item.el||!item.expr)return;
+    var value=evalExpr(item.expr);
+    if(value===undefined)return;
+    var textNode=item.el.querySelector('.qml-cb-text');
+    if(textNode){textNode.textContent=String(value);}else{item.el.textContent=String(value);}
+  });
+  applyWhenStates();
+  Runtime.applying=false;
+}
+
+function applyWhenStates(){
+  Object.keys(Runtime.stateDefs).forEach(function(ownerId){
+    var def=Runtime.stateDefs[ownerId];
+    if(!def||!def.states)return;
+    var chosen='';
+    for(var i=0;i<def.states.length;i++){
+      var st=def.states[i];
+      if(!st.when)continue;
+      var ok=!!evalExpr(st.when, Runtime.ids[ownerId]||{});
+      if(ok){chosen=st.name;break;}
+    }
+    if(chosen){
+      applyState(ownerId, chosen);
+      var owner=Runtime.ids[ownerId];
+      if(owner){ owner.state = chosen; }
+    }
+  });
+}
+
+function evalRowExpr(expr,row,index){
+  if(!expr)return '';
+  var source=String(expr).trim();
+  try{
+    return Function('scope','with(scope){ return ('+source+'); }')(
+      Object.assign({index:index,modelData:row&&row.modelData},row||{})
+    );
+  }catch(_e){
+    return source.replace(/\$\{index\}/g,String(index));
+  }
+}
+
+function refreshModelViews(modelId){
+  var rows=Runtime.modelDefs[modelId]||[];
+  var views=document.querySelectorAll('[data-qml-model-ref="'+modelId+'"]');
+  views.forEach(function(view){
+    var tpl=view.getAttribute('data-qml-delegate-text')||'';
+    var itemType=(view.getAttribute('data-qml-delegate-item')||'ItemDelegate').toLowerCase();
+    var currentIdx=parseInt(view.getAttribute('data-qml-currentindex')||'-1',10);
+    if(!tpl)return;
+    var html='';
+    rows.forEach(function(row,idx){
+      var text=evalRowExpr(tpl,row,idx);
+      if(itemType==='itemdelegate'){
+        var selected=idx===currentIdx;
+        html+='<div class="qml-node qml-itemdelegate" data-qml-type="itemdelegate" data-qml-index="'+idx+'" style="padding:8px 12px;border-bottom:1px solid var(--qml-item-border);font-size:13px;cursor:pointer;'+(selected?'background:var(--qml-combo-dd-sel-bg);font-weight:600;':'')+'">'+escHtml(String(text))+'</div>';
+      }else{
+        html+='<div class="qml-node" style="padding:4px 8px;">'+escHtml(String(text))+'</div>';
+      }
+    });
+    view.innerHTML=html;
+  });
+  refreshStructuredViews(modelId);
+}
+
+function parseJsonAttr(el,name,fallback){
+  try{return JSON.parse(el.getAttribute(name)||'');}catch(_e){return fallback;}
+}
+
+function refreshTableView(view,rows){
+  var columns=parseJsonAttr(view,'data-qml-columns',[]);
+  var headers=parseJsonAttr(view,'data-qml-headers',columns);
+  var widths=parseJsonAttr(view,'data-qml-columnwidths',[]);
+  if(!columns.length&&rows.length)columns=Object.keys(rows[0]).filter(function(k){return k!=='modelData';});
+  if(!headers.length)headers=columns;
+  var gridColumns=columns.map(function(_column,index){
+    var width=parseFloat(widths[index]);
+    return !isNaN(width)&&width>0?Math.max(48,width)+'px':'minmax(90px,1fr)';
+  }).join(' ');
+  var resizable=view.getAttribute('data-qml-resizablecolumns')==='true';
+  var sortColumn=parseInt(view.getAttribute('data-qml-sort-column')||'-1',10);
+  var sortDirection=view.getAttribute('data-qml-sort')||'';
+  var selected=(view.getAttribute('data-qml-selected')||'').split(',').filter(Boolean).map(Number);
+  var html='<div class="qml-table-grid" role="grid" style="display:grid;grid-template-columns:'+gridColumns+';min-width:100%;width:max-content;border-top:1px solid var(--qml-control-border);border-left:1px solid var(--qml-control-border)">';
+  headers.forEach(function(header,index){
+    var sorted=index===sortColumn;
+    var sortIndicator=sorted?'<span class="qml-table-sort" aria-hidden="true" style="margin-left:auto;padding-left:8px;font-size:10px">'+(sortDirection==='desc'?'▼':'▲')+'</span>':'';
+    html+='<button type="button" class="qml-table-header" data-qml-column="'+index+'" data-qml-sorted="'+String(sorted)+'" aria-sort="'+(sorted?(sortDirection==='desc'?'descending':'ascending'):'none')+'" style="position:sticky;top:0;display:flex;align-items:center;min-height:30px;padding:6px 9px;text-align:left;font:inherit;font-weight:600;color:var(--qml-control-text);background:var(--qml-table-header-bg);border:0;border-right:1px solid var(--qml-table-header-border);border-bottom:2px solid var(--qml-table-header-border);box-shadow:inset 0 1px 0 rgba(255,255,255,.35);cursor:pointer;z-index:1"><span>'+escHtml(String(header))+'</span>'+sortIndicator+(resizable?'<span class="qml-table-resizer" aria-hidden="true" style="position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:2"></span>':'')+'</button>';
+  });
+  rows.forEach(function(row,rowIndex){
+    columns.forEach(function(role,columnIndex){
+      var active=selected.indexOf(rowIndex)>=0;
+      html+='<div role="gridcell" tabindex="0" class="qml-table-cell" data-qml-row="'+rowIndex+'" data-qml-column="'+columnIndex+'" data-qml-role="'+escHtml(String(role))+'" style="padding:6px 8px;border-right:1px solid var(--qml-control-border);border-bottom:1px solid var(--qml-control-border);background:'+(active?'var(--qml-combo-dd-sel-bg)':'transparent')+';cursor:default">'+escHtml(String(row[role]===undefined?'':row[role]))+'</div>';
+    });
+  });
+  view.innerHTML=html+'</div>';
+}
+
+function refreshTreeView(view,rows){
+  var idRole=view.getAttribute('data-qml-idrole')||'nodeId';
+  var parentRole=view.getAttribute('data-qml-parentrole')||'parentId';
+  var textRole=view.getAttribute('data-qml-textrole')||'text';
+  var flattened=[];
+  var flatten=function(items,parent){
+    (items||[]).forEach(function(item,index){
+      var row=Object.assign({},item);
+      var id=String(row[idRole]===undefined?(parent?parent+'-'+index:String(index)):row[idRole]);
+      row[idRole]=id;
+      row[parentRole]=parent;
+      flattened.push(row);
+      if(Array.isArray(item.children))flatten(item.children,id);
+    });
+  };
+  if(rows.some(function(row){return Array.isArray(row&&row.children);})){
+    flatten(rows,'');
+    rows=flattened;
+  }
+  var expanded=new Set((view.getAttribute('data-qml-expanded-ids')||'').split(',').filter(Boolean));
+  if(!view.hasAttribute('data-qml-tree-ready')&&view.getAttribute('data-qml-expanded')==='true'){
+    rows.forEach(function(row){expanded.add(String(row[idRole]));});
+    view.setAttribute('data-qml-tree-ready','true');
+    view.setAttribute('data-qml-expanded-ids',Array.from(expanded).join(','));
+  }
+  var selected=(view.getAttribute('data-qml-selected')||'').split(',').filter(Boolean);
+  var byParent={};
+  rows.forEach(function(row,index){
+    var parent=String(row[parentRole]===undefined?'':row[parentRole]);
+    (byParent[parent]||(byParent[parent]=[])).push({row:row,index:index});
+  });
+  var renderBranch=function(parent,depth){
+    return (byParent[parent]||[]).map(function(item){
+      var id=String(item.row[idRole]===undefined?item.index:item.row[idRole]);
+      var children=byParent[id]||[];
+      var open=expanded.has(id);
+      var active=selected.indexOf(id)>=0;
+      var line='<div role="treeitem" tabindex="0" class="qml-tree-row" data-qml-nodeid="'+escHtml(id)+'" data-qml-index="'+item.index+'" aria-expanded="'+(children.length?String(open):'false')+'" style="padding:5px 8px 5px '+(8+depth*18)+'px;background:'+(active?'var(--qml-combo-dd-sel-bg)':'transparent')+';cursor:default;white-space:nowrap"><span class="qml-tree-toggle" style="display:inline-block;width:16px;cursor:'+(children.length?'pointer':'default')+'">'+(children.length?(open?'▾':'▸'):'')+'</span>'+escHtml(String(item.row[textRole]===undefined?id:item.row[textRole]))+'</div>';
+      if(children.length&&open)line+=renderBranch(id,depth+1);
+      return line;
+    }).join('');
+  };
+  view.innerHTML='<div role="tree">'+renderBranch('',0)+'</div>';
+}
+
+function refreshStructuredViews(modelId){
+  var rows=Runtime.modelDefs[modelId]||[];
+  document.querySelectorAll('.qml-tableview[data-qml-model-ref="'+modelId+'"],.qml-treeview[data-qml-model-ref="'+modelId+'"]').forEach(function(view){
+    if(view.classList.contains('qml-tableview'))refreshTableView(view,rows);
+    else refreshTreeView(view,rows);
+  });
+}
+
+function rowsForStructuredView(view){
+  var modelRef=view.getAttribute('data-qml-model-ref')||'';
+  if(Runtime.modelDefs[modelRef])return Runtime.modelDefs[modelRef];
+  try{
+    var direct=JSON.parse(modelRef);
+    return Array.isArray(direct)?direct:[];
+  }catch(_e){return [];}
+}
+
+function registerModelApi(modelId, rows, proxy){
+  Runtime.modelDefs[modelId]=rows;
+  proxy.count=rows.length;
+  proxy.get=function(index){return rows[index]||null;};
+  proxy.append=function(obj){
+    rows.push(Object.assign({},obj||{}));
+    proxy.count=rows.length;
+    refreshModelViews(modelId);
+  };
+  proxy.remove=function(index,count){
+    var n=(count===undefined)?1:Math.max(1,parseInt(String(count),10)||1);
+    rows.splice(Math.max(0,parseInt(String(index),10)||0),n);
+    proxy.count=rows.length;
+    refreshModelViews(modelId);
+  };
+  proxy.setProperty=function(index,name,value){
+    var i=Math.max(0,parseInt(String(index),10)||0);
+    if(!rows[i])rows[i]={};
+    rows[i][name]=value;
+    refreshModelViews(modelId);
+  };
+  proxy.set=function(index,obj){
+    var i=Math.max(0,parseInt(String(index),10)||0);
+    if(i<rows.length)rows[i]=Object.assign({},obj||{});
+    refreshModelViews(modelId);
+  };
+  proxy.clear=function(){
+    rows.length=0;
+    proxy.count=0;
+    refreshModelViews(modelId);
+  };
+}
+
+function registerNode(node){
+  if(!node||typeof node!=='object')return;
+
+  if(node.id){
+    var store={};
+    var proxy=new Proxy(store,{set:function(target,key,val){
+      if(Object.is(target[key], val)){
+        return true;
+      }
+      target[key]=val;
+      if(!Runtime.booting){
+        setDomProp(node.id,String(key),val);
+        emitSignal(node.id, String(key).toLowerCase()+'changed', val);
+      }
+      return true;
+    },get:function(target,key){return target[key];}});
+    Runtime.ids[node.id]=proxy;
+
+    if(node.type==='ListModel'){
+      var rows=[];
+      (node.children||[]).forEach(function(ch){
+        if(ch.type!=='ListElement')return;
+        var row={};
+        Object.keys(ch.properties||{}).forEach(function(k){ row[k]=coerceLiteral(ch.properties[k]); });
+        if(row.modelData===undefined){row.modelData=row.text!==undefined?row.text:'';}
+        rows.push(row);
+      });
+      registerModelApi(node.id, rows, proxy);
+    }
+
+    Object.keys(node.properties||{}).forEach(function(k){
+      proxy[k]=coerceLiteral(node.properties[k]);
+      if(k!=='id'&&isExpressionLike(node.properties[k])){
+        Runtime.bindings.push({id:node.id,prop:k,expr:node.properties[k]});
+      }
+    });
+    if(node.type==='Dialog'||node.type==='Popup'){
+      var previewKey=node.id||'';
+      proxy.open=function(){proxy.visible=true;proxy.opened=true;activatePreviewTab(previewKey);emitSignal(node.id,'opened',null);};
+      proxy.close=function(){proxy.visible=false;proxy.opened=false;activatePreviewTab('root');emitSignal(node.id,'closed',null);};
+      proxy.accept=function(){proxy.close();emitSignal(node.id,'accepted',null);};
+      proxy.reject=function(){proxy.close();emitSignal(node.id,'rejected',null);};
+    }
+    if(node.properties&&node.properties.states){
+      Runtime.stateDefs[node.id]={
+        states:parseStates(node.properties.states),
+        transition:parseTransition(node.properties.transitions||''),
+      };
+    }
+  }
+
+  if(node.methods){
+    Object.keys(node.methods).forEach(function(name){
+      var fnSource=node.methods[name];
+      Runtime.methods[name]=function(){
+        var args=Array.prototype.slice.call(arguments);
+        var self=(node.id&&Runtime.ids[node.id])?Runtime.ids[node.id]:S;
+        var scope=Object.assign({Math:Math,Qt:Qt,S:S},Runtime.methods,Runtime.ids,{__args:args,__self:self});
+        try{
+          return Function('scope','source','with(scope){ return (eval("("+source+")")).apply(__self,__args); }')(scope,fnSource);
+        }catch(_e){
+          return;
+        }
+      };
+    });
+  }
+
+  if(node.type==='Connections'){
+    var target=((node.properties&&node.properties.target)||'').trim();
+    if(target){
+      Object.keys(node.properties||{}).forEach(function(k){
+        if(!/^on[A-Z]/.test(k))return;
+        var signal=k.slice(2).toLowerCase();
+        Runtime.connections.push({target:target,signal:signal,code:node.properties[k]});
+      });
+      if(node.methods){
+        Object.keys(node.methods).forEach(function(mn){
+          if(!/^on[A-Z]/.test(mn))return;
+          var signal=mn.slice(2).toLowerCase();
+          var src=node.methods[mn];
+          var body=src.replace(/^function\s+[A-Za-z_]\w*\s*\([^)]*\)\s*\{([\s\S]*)\}$/,'$1');
+          Runtime.connections.push({target:target,signal:signal,code:body});
+        });
+      }
+    }
+  }
+
+  (node.children||[]).forEach(registerNode);
+  if(node.blockProperties){
+    Object.keys(node.blockProperties).forEach(function(k){registerNode(node.blockProperties[k]);});
+  }
+}
+
+function runElementHandler(t, signalName, eventObj){
+  if(!t)return;
+  var key='data-qml-on'+signalName;
+  var code=t.getAttribute(key);
+  if(code){
+    execCode(code, Object.assign({event:eventObj||null}, Runtime.ids[t.id]||{}));
+  }
+  if(t.id){
+    emitSignal(t.id, signalName, eventObj||null);
+  }else{
+    applyBindings();
+  }
+}
+
+function updateRangeSlider(t,clientX,preferred){
+  var rect=t.getBoundingClientRect();
+  var from=parseFloat(t.getAttribute('data-qml-from')||'0');
+  var to=parseFloat(t.getAttribute('data-qml-to')||'100');
+  var first=parseFloat(t.getAttribute('data-qml-first')||String(from));
+  var second=parseFloat(t.getAttribute('data-qml-second')||String(to));
+  var pct=Math.max(0,Math.min(1,(clientX-rect.left)/Math.max(1,rect.width)));
+  var value=from+(to-from)*pct;
+  var which=preferred||((Math.abs(value-first)<=Math.abs(value-second))?'first':'second');
+  if(which==='first')first=Math.min(value,second);else second=Math.max(value,first);
+  var p1=((first-from)/(to-from||1))*100;
+  var p2=((second-from)/(to-from||1))*100;
+  t.setAttribute('data-qml-first',String(first));
+  t.setAttribute('data-qml-second',String(second));
+  var fill=t.querySelector('.qml-range-fill');
+  var firstEl=t.querySelector('.qml-range-first');
+  var secondEl=t.querySelector('.qml-range-second');
+  if(fill){fill.style.left=p1+'%';fill.style.width=(p2-p1)+'%';}
+  if(firstEl)firstEl.style.left='calc('+p1+'% - 6px)';
+  if(secondEl)secondEl.style.left='calc('+p2+'% - 6px)';
+  if(t.id&&Runtime.ids[t.id]){Runtime.ids[t.id].firstValue=first;Runtime.ids[t.id].secondValue=second;}
+  runElementHandler(t,'moved',null);
+  return which;
+}
+
+function updateDial(t,clientX,clientY){
+  var rect=t.getBoundingClientRect();
+  var angle=Math.atan2(clientY-(rect.top+rect.height/2),clientX-(rect.left+rect.width/2))*180/Math.PI+90;
+  if(angle>180)angle-=360;
+  angle=Math.max(-135,Math.min(135,angle));
+  var from=parseFloat(t.getAttribute('data-qml-from')||'0');
+  var to=parseFloat(t.getAttribute('data-qml-to')||'100');
+  var value=from+(to-from)*((angle+135)/270);
+  t.setAttribute('data-qml-value',String(value));
+  var needle=t.querySelector('.qml-dial-needle');
+  if(needle)needle.style.transform='rotate('+angle+'deg)';
+  if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].value=value;
+  runElementHandler(t,'moved',null);
+}
+
+function stepTumbler(t,delta,eventObj){
+  var items=[];
+  try{items=JSON.parse(t.getAttribute('data-qml-model')||'[]');}catch(_e){items=[];}
+  if(!items.length)return;
+  var idx=parseInt(t.getAttribute('data-qml-currentindex')||'0',10);
+  idx=(idx+delta+items.length)%items.length;
+  t.setAttribute('data-qml-currentindex',String(idx));
+  var value=t.querySelector('.qml-tumbler-value');
+  if(value)value.textContent=String(items[idx]);
+  if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].currentIndex=idx;
+  runElementHandler(t,'currentindexchanged',eventObj||null);
+}
+
+var activeDrag=null;
+document.addEventListener('pointerdown',function(e){
+  var resizer=e.target.closest('.qml-table-resizer');
+  if(resizer){
+    var table=resizer.closest('.qml-tableview');
+    var header=resizer.closest('.qml-table-header');
+    var widths=parseJsonAttr(table,'data-qml-columnwidths',[]);
+    var headers=Array.prototype.slice.call(table.querySelectorAll('.qml-table-header'));
+    while(widths.length<headers.length)widths.push(headers[widths.length].getBoundingClientRect().width);
+    activeDrag={type:'table-column',el:table,column:parseInt(header.getAttribute('data-qml-column')||'0',10),startX:e.clientX,startWidth:header.getBoundingClientRect().width,widths:widths};
+    e.preventDefault();e.stopPropagation();
+    return;
+  }
+  var range=e.target.closest('[data-qml-type="rangeslider"]');
+  if(range){
+    var preferred=e.target.closest('.qml-range-first')?'first':e.target.closest('.qml-range-second')?'second':null;
+    activeDrag={type:'range',el:range,which:updateRangeSlider(range,e.clientX,preferred)};
+    e.preventDefault();
+    return;
+  }
+  var dial=e.target.closest('[data-qml-type="dial"]');
+  if(dial){activeDrag={type:'dial',el:dial};updateDial(dial,e.clientX,e.clientY);e.preventDefault();}
+});
+document.addEventListener('pointermove',function(e){
+  if(!activeDrag)return;
+  if(activeDrag.type==='table-column'){
+    activeDrag.widths[activeDrag.column]=Math.max(48,activeDrag.startWidth+e.clientX-activeDrag.startX);
+    activeDrag.el.setAttribute('data-qml-columnwidths',JSON.stringify(activeDrag.widths));
+    var grid=activeDrag.el.querySelector('.qml-table-grid');
+    if(grid)grid.style.gridTemplateColumns=activeDrag.widths.map(function(width){return Math.max(48,width)+'px';}).join(' ');
+    return;
+  }
+  if(activeDrag.type==='range')updateRangeSlider(activeDrag.el,e.clientX,activeDrag.which);
+  if(activeDrag.type==='dial')updateDial(activeDrag.el,e.clientX,e.clientY);
+});
+document.addEventListener('pointerup',function(){activeDrag=null;});
+document.addEventListener('wheel',function(e){
+  var tumbler=e.target.closest('[data-qml-type="tumbler"]');
+  if(!tumbler)return;
+  e.preventDefault();
+  stepTumbler(tumbler,e.deltaY>0?1:-1,e);
+},{passive:false});
+
+(QML_AST||[]).forEach(registerNode);
+Runtime.booting=false;
+Object.keys(Runtime.modelDefs).forEach(function(mid){refreshModelViews(mid);});
+Runtime.domTextBindings=Array.prototype.map.call(document.querySelectorAll('[data-qml-bind-text]'),function(el){
+  return {el:el,expr:el.getAttribute('data-qml-bind-text')||''};
+});
+document.querySelectorAll('[data-qml-loader="true"]').forEach(function(el){
+  if(!el.getAttribute('data-qml-loader-template')){
+    el.setAttribute('data-qml-loader-template', el.innerHTML || '');
+  }
+});
+applyBindings();
 document.addEventListener('click',function(e){
   var t=e.target.closest('[data-qml-type]');
   if(!t)return;
@@ -331,11 +1533,13 @@ document.addEventListener('click',function(e){
     case'roundbutton':{
       t.style.transform='scale(0.93)';
       setTimeout(function(){t.style.transform='';},100);
+      runElementHandler(t,'clicked',e);
       break;
     }
     case'toolbutton':{
       t.style.background='var(--qml-btn-hover-bg)';
       setTimeout(function(){t.style.background='';},150);
+      runElementHandler(t,'clicked',e);
       break;
     }
     case'checkbox':{
@@ -343,6 +1547,8 @@ document.addEventListener('click',function(e){
       t.setAttribute('data-qml-checked',String(checked));
       var marker=t.querySelector('.qml-cb-marker');
       if(marker)marker.textContent=checked?'✓':'☐';
+      if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].checked=checked;
+      runElementHandler(t,'clicked',e);
       break;
     }
     case'radio':{
@@ -352,6 +1558,7 @@ document.addEventListener('click',function(e){
         r.innerHTML='<span style="font-size:16px;line-height:1">○</span> '+(r.getAttribute('data-qml-text')||'');
       });
       t.innerHTML='<span style="font-size:16px;line-height:1">◉</span> '+txt;
+      runElementHandler(t,'clicked',e);
       break;
     }
     case'switch':{
@@ -363,6 +1570,8 @@ document.addEventListener('click',function(e){
         var thumb=track.firstElementChild;
         if(thumb){thumb.style.right=on?'2px':'auto';thumb.style.left=on?'auto':'2px';}
       }
+      if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].checked=on;
+      runElementHandler(t,'clicked',e);
       break;
     }
     case'slider':{
@@ -372,7 +1581,108 @@ document.addEventListener('click',function(e){
       var from=parseFloat(t.getAttribute('data-qml-from')||'0');
       var to=parseFloat(t.getAttribute('data-qml-to')||'100');
       t.setAttribute('data-qml-value',String(Math.round(from+(to-from)*(pct/100))));
-      t.style.background='linear-gradient(to right, var(--qml-accent) '+pct+'%, var(--qml-slider-track) '+pct+'%)';
+      var fill=t.querySelector('.qml-slider-fill');
+      var thumb=t.querySelector('.qml-slider-thumb');
+      if(fill){fill.style.width=pct+'%';}
+      if(thumb){thumb.style.left='calc('+pct+'% - 7px)';}
+      if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].value=parseFloat(t.getAttribute('data-qml-value')||'0');
+      runElementHandler(t,'moved',e);
+      break;
+    }
+    case'itemdelegate':{
+      var view=t.closest('.qml-listview');
+      if(view){
+        var selIdx=parseInt(t.getAttribute('data-qml-index')||'-1',10);
+        if(!isNaN(selIdx)&&selIdx>=0){
+          view.setAttribute('data-qml-currentindex',String(selIdx));
+          Array.prototype.forEach.call(view.querySelectorAll('.qml-itemdelegate'),function(item){
+            var selected=item===t;
+            item.style.background=selected?'var(--qml-combo-dd-sel-bg)':'';
+            item.style.fontWeight=selected?'600':'';
+          });
+          var modelRef=view.getAttribute('data-qml-model-ref')||'';
+          if(modelRef)refreshModelViews(modelRef);
+          if(view.id&&Runtime.ids[view.id])Runtime.ids[view.id].currentIndex=selIdx;
+          runElementHandler(view,'activated',e);
+        }
+      }
+      break;
+    }
+    case'tumbler':{
+      if(e.target.closest('.qml-tumbler-up'))stepTumbler(t,-1,e);
+      else if(e.target.closest('.qml-tumbler-down'))stepTumbler(t,1,e);
+      break;
+    }
+    case'calendar':{
+      var day=e.target.closest('.qml-calendar-day');
+      if(!day)return;
+      t.querySelectorAll('.qml-calendar-day').forEach(function(cell){
+        cell.style.background='';cell.style.color='';cell.style.fontWeight='';
+      });
+      day.style.background='var(--qml-accent)';
+      day.style.color='white';
+      day.style.fontWeight='600';
+      var selected=parseInt(day.getAttribute('data-qml-day')||'0',10);
+      t.setAttribute('data-qml-selectedday',String(selected));
+      if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].selectedDay=selected;
+      runElementHandler(t,'clicked',e);
+      break;
+    }
+    case'tableview':{
+      var cell=e.target.closest('.qml-table-cell');
+      var header=e.target.closest('.qml-table-header');
+      var tableModel=t.getAttribute('data-qml-model-ref')||'';
+      if(e.target.closest('.qml-table-resizer')){
+        break;
+      }else if(header&&tableModel){
+        var columns=parseJsonAttr(t,'data-qml-columns',[]);
+        var columnIndex=parseInt(header.getAttribute('data-qml-column')||'0',10);
+        var role=columns[columnIndex];
+        var rows=Runtime.modelDefs[tableModel]||[];
+        var previousColumn=parseInt(t.getAttribute('data-qml-sort-column')||'-1',10);
+        var direction=previousColumn===columnIndex&&t.getAttribute('data-qml-sort')==='asc'?'desc':'asc';
+        rows.sort(function(a,b){return String(a[role]||'').localeCompare(String(b[role]||''))*(direction==='asc'?1:-1);});
+        t.setAttribute('data-qml-sort-column',String(columnIndex));
+        t.setAttribute('data-qml-sort',direction);
+        refreshTableView(t,rows);
+      }else if(cell){
+        var rowIndex=parseInt(cell.getAttribute('data-qml-row')||'-1',10);
+        var selected=(t.getAttribute('data-qml-selected')||'').split(',').filter(Boolean).map(Number);
+        if(t.getAttribute('data-qml-selectionmode')==='ExtendedSelection'&&(e.ctrlKey||e.metaKey)){
+          selected=selected.indexOf(rowIndex)>=0?selected.filter(function(v){return v!==rowIndex;}):selected.concat(rowIndex);
+        }else selected=[rowIndex];
+        t.setAttribute('data-qml-selected',selected.join(','));
+        t.setAttribute('data-qml-currentindex',String(rowIndex));
+        if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].currentIndex=rowIndex;
+        t.querySelectorAll('.qml-table-cell').forEach(function(tableCell){
+          var selectedRow=parseInt(tableCell.getAttribute('data-qml-row')||'-1',10);
+          tableCell.style.background=selected.indexOf(selectedRow)>=0?'var(--qml-combo-dd-sel-bg)':'transparent';
+        });
+        runElementHandler(t,'activated',e);
+      }
+      break;
+    }
+    case'treeview':{
+      var row=e.target.closest('.qml-tree-row');
+      if(!row)return;
+      var nodeId=row.getAttribute('data-qml-nodeid')||'';
+      var toggle=e.target.closest('.qml-tree-toggle');
+      if(toggle&&toggle.textContent){
+        var expanded=new Set((t.getAttribute('data-qml-expanded-ids')||'').split(',').filter(Boolean));
+        if(expanded.has(nodeId))expanded.delete(nodeId);else expanded.add(nodeId);
+        t.setAttribute('data-qml-expanded-ids',Array.from(expanded).join(','));
+      }else{
+        var selected=(t.getAttribute('data-qml-selected')||'').split(',').filter(Boolean);
+        if(t.getAttribute('data-qml-selectionmode')==='ExtendedSelection'&&(e.ctrlKey||e.metaKey)){
+          selected=selected.indexOf(nodeId)>=0?selected.filter(function(v){return v!==nodeId;}):selected.concat(nodeId);
+        }else selected=[nodeId];
+        t.setAttribute('data-qml-selected',selected.join(','));
+        var treeIndex=parseInt(row.getAttribute('data-qml-index')||'-1',10);
+        t.setAttribute('data-qml-currentindex',String(treeIndex));
+        if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].currentIndex=treeIndex;
+        runElementHandler(t,'activated',e);
+      }
+      refreshTreeView(t,Runtime.modelDefs[t.getAttribute('data-qml-model-ref')||'']||[]);
       break;
     }
     case'tabbutton':{
@@ -389,7 +1699,10 @@ document.addEventListener('click',function(e){
       if(stack){
         var panels=Array.prototype.filter.call(stack.children,function(c){return c.classList.contains('qml-node');});
         panels.forEach(function(p,i){p.style.display=i===idx?'':'none';});
+        if(stack.id&&Runtime.ids[stack.id])Runtime.ids[stack.id].currentIndex=idx;
       }
+      if(tb&&tb.id&&Runtime.ids[tb.id])Runtime.ids[tb.id].currentIndex=idx;
+      runElementHandler(t,'clicked',e);
       break;
     }
     case'combobox':{
@@ -418,6 +1731,8 @@ document.addEventListener('click',function(e){
             lbl.textContent=item;
             lbl.style.color='var(--qml-control-text)';
           }
+          if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].currentIndex=i;
+          runElementHandler(t,'activated',e);
           box.remove();
         };
         box.appendChild(opt);
@@ -433,21 +1748,64 @@ document.addEventListener('click',function(e){
       setTimeout(function(){document.addEventListener('click',closer,true);},0);
       break;
     }
+    case'spinbox':{
+      var value=parseFloat(t.getAttribute('data-qml-value')||'0');
+      var from=parseFloat(t.getAttribute('data-qml-from')||'0');
+      var to=parseFloat(t.getAttribute('data-qml-to')||'99');
+      var step=parseFloat(t.getAttribute('data-qml-step')||'1');
+      if(isNaN(step)||step<=0)step=1;
+      var isInc=!!e.target.closest('.qml-spinbox-inc');
+      var isDec=!!e.target.closest('.qml-spinbox-dec');
+      if(isInc||isDec){
+        value=value+(isInc?step:-step);
+        value=Math.max(from,Math.min(to,value));
+        t.setAttribute('data-qml-value',String(value));
+        var v=t.querySelector('.qml-spinbox-value');
+        if(v){v.textContent=String(value);} 
+        if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].value=value;
+        runElementHandler(t,'valuechanged',e);
+      }
+      runElementHandler(t,'clicked',e);
+      break;
+    }
+    case'delaybutton':{
+      var d=parseInt(t.getAttribute('data-qml-delay')||'800',10);
+      if(isNaN(d)||d<0)d=800;
+      var fill=t.querySelector('.qml-delay-fill');
+      if(fill){
+        fill.style.transition='none';
+        fill.style.width='0%';
+        requestAnimationFrame(function(){
+          fill.style.transition='width '+d+'ms linear';
+          fill.style.width='100%';
+        });
+      }
+      setTimeout(function(){runElementHandler(t,'triggered',e);},d);
+      break;
+    }
     case'menu':{
-      // convert children to dropdown on first click
-      var dd=t.querySelector('.qml-menu-dd');
-      if(!dd&&t.children.length){
-        dd=document.createElement('div');
-        dd.className='qml-menu-dd';
-        dd.style.cssText='display:none;position:absolute;top:100%;left:0;background:var(--qml-combo-dd-bg);border:1px solid var(--qml-combo-dd-border);border-radius:4px;box-shadow:0 4px 12px var(--qml-combo-dd-shadow);z-index:200;min-width:120px;margin-top:2px;';
-        while(t.children.length){
-        var mc=t.children[0];
-        mc.style.display='';
-        dd.appendChild(mc);
+      document.querySelectorAll('.qml-menu-dd-global').forEach(function(d){d.remove();});
+      var rect=t.getBoundingClientRect();
+      var dd=document.createElement('div');
+      dd.className='qml-menu-dd-global';
+      dd.style.cssText='position:fixed;top:'+(rect.bottom+2)+'px;left:'+rect.left+'px;background:var(--qml-combo-dd-bg);border:1px solid var(--qml-combo-dd-border);border-radius:4px;box-shadow:0 4px 12px var(--qml-combo-dd-shadow);z-index:12000;min-width:140px;padding:2px 0;';
+      Array.prototype.forEach.call(t.children,function(c){
+        if(!c.classList)return;
+        if(c.classList.contains('qml-menuitem')||c.classList.contains('qml-menuseparator')){
+          var clone=c.cloneNode(true);
+          clone.style.display='block';
+          dd.appendChild(clone);
+        }
+      });
+      if(dd.children.length>0){
+        document.body.appendChild(dd);
       }
-        t.appendChild(dd);
-      }
-      if(dd)dd.style.display=dd.style.display==='none'?'block':'none';
+      runElementHandler(t,'clicked',e);
+      break;
+    }
+    case'menuitem':{
+      runElementHandler(t,'triggered',e);
+      document.querySelectorAll('.qml-menu-dd-global').forEach(function(d){d.remove();});
       break;
     }
   }
@@ -458,17 +1816,121 @@ document.addEventListener('click',function(e){
     document.querySelectorAll('.qml-combo-dd').forEach(function(d){d.remove();});
   }
   if(!e.target.closest('[data-qml-type="menu"]')){
-    document.querySelectorAll('.qml-menu-dd').forEach(function(d){d.style.display='none';});
+    if(!e.target.closest('.qml-menu-dd-global')){
+      document.querySelectorAll('.qml-menu-dd-global').forEach(function(d){d.remove();});
+    }
+  }
+});
+document.addEventListener('dblclick',function(e){
+  var cell=e.target.closest('.qml-tableview[data-qml-editable="true"] .qml-table-cell');
+  if(!cell)return;
+  var view=cell.closest('.qml-tableview');
+  var modelId=view.getAttribute('data-qml-model-ref')||'';
+  var rowIndex=parseInt(cell.getAttribute('data-qml-row')||'-1',10);
+  var role=cell.getAttribute('data-qml-role')||'';
+  cell.contentEditable='true';cell.focus();
+  var commit=function(){
+    cell.contentEditable='false';
+    var rows=Runtime.modelDefs[modelId]||[];
+    if(rows[rowIndex])rows[rowIndex][role]=cell.textContent||'';
+    refreshTableView(view,rows);
+  };
+  cell.addEventListener('blur',commit,{once:true});
+  cell.addEventListener('keydown',function(event){if(event.key==='Enter'){event.preventDefault();cell.blur();}},{once:true});
+});
+document.addEventListener('keydown',function(e){
+  var list=e.target.closest('.qml-listview');
+  if(list&&(e.key==='ArrowDown'||e.key==='ArrowUp')){
+    var items=Array.prototype.slice.call(list.querySelectorAll('.qml-itemdelegate'));
+    var current=parseInt(list.getAttribute('data-qml-currentindex')||'-1',10);
+    var next=Math.max(0,Math.min(items.length-1,current+(e.key==='ArrowDown'?1:-1)));
+    if(items[next]){items[next].click();items[next].focus();e.preventDefault();}
+    return;
+  }
+  var table=e.target.closest('.qml-tableview');
+  if(table&&e.target.closest('.qml-table-cell')&&['ArrowDown','ArrowUp','ArrowLeft','ArrowRight'].indexOf(e.key)>=0){
+    var cell=e.target.closest('.qml-table-cell');
+    var row=parseInt(cell.getAttribute('data-qml-row')||'0',10);
+    var column=parseInt(cell.getAttribute('data-qml-column')||'0',10);
+    var columns=parseJsonAttr(table,'data-qml-columns',[]).length||1;
+    if(e.key==='ArrowDown')row++;if(e.key==='ArrowUp')row--;
+    if(e.key==='ArrowRight')column++;if(e.key==='ArrowLeft')column--;
+    row=Math.max(0,row);column=Math.max(0,Math.min(columns-1,column));
+    var target=table.querySelector('.qml-table-cell[data-qml-row="'+row+'"][data-qml-column="'+column+'"]');
+    if(target){target.click();target.focus();e.preventDefault();}
+    return;
+  }
+  var tree=e.target.closest('.qml-treeview');
+  if(tree&&e.target.closest('.qml-tree-row')){
+    var rows=Array.prototype.slice.call(tree.querySelectorAll('.qml-tree-row'));
+    var active=e.target.closest('.qml-tree-row');
+    var index=rows.indexOf(active);
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      var target=rows[Math.max(0,Math.min(rows.length-1,index+(e.key==='ArrowDown'?1:-1)))];
+      if(target){target.click();target.focus();e.preventDefault();}
+    }else if(e.key==='ArrowLeft'&&active.getAttribute('aria-expanded')==='true'){
+      active.querySelector('.qml-tree-toggle').click();e.preventDefault();
+    }else if(e.key==='ArrowRight'&&active.getAttribute('aria-expanded')==='false'&&active.querySelector('.qml-tree-toggle').textContent){
+      active.querySelector('.qml-tree-toggle').click();e.preventDefault();
+    }
   }
 });
 // init: highlight first tab, show only first stack panel
 (function init(){
-  document.querySelectorAll('[data-qml-type="tabbutton"]').forEach(function(t,i){
-    if(i===0){t.style.borderBottom='2px solid var(--qml-accent)';t.style.color='var(--qml-text-color)';}
+  document.querySelectorAll('.qml-tabbar').forEach(function(tb){
+    var idx=parseInt(tb.getAttribute('data-qml-currentindex')||'0',10);
+    if(isNaN(idx)||idx<0)idx=0;
+    var kids=Array.prototype.filter.call(tb.children,function(c){return c.getAttribute&&c.getAttribute('data-qml-type')==='tabbutton';});
+    kids.forEach(function(t,i){
+      t.style.borderBottom=i===idx?'2px solid var(--qml-accent)':'2px solid transparent';
+      t.style.color=i===idx?'var(--qml-text-color)':'var(--qml-muted-text)';
+    });
+
+    var stack=tb.nextElementSibling;
+    while(stack&&!stack.classList.contains('qml-stacklayout')){stack=stack.nextElementSibling;}
+    if(stack){
+      var stackIdxAttr=parseInt(stack.getAttribute('data-qml-currentindex')||String(idx),10);
+      var stackIdx=isNaN(stackIdxAttr)?idx:stackIdxAttr;
+      var panels=Array.prototype.filter.call(stack.children,function(c){return c.classList.contains('qml-node');});
+      panels.forEach(function(p,i){p.style.display=i===stackIdx?'':'none';});
+    }
   });
+
   document.querySelectorAll('.qml-stacklayout').forEach(function(s){
+    if(s.previousElementSibling&&s.previousElementSibling.classList.contains('qml-tabbar'))return;
+    var idx=parseInt(s.getAttribute('data-qml-currentindex')||'0',10);
+    if(isNaN(idx)||idx<0)idx=0;
     var panels=Array.prototype.filter.call(s.children,function(c){return c.classList.contains('qml-node');});
-    panels.forEach(function(p,i){p.style.display=i===0?'':'none';});
+    panels.forEach(function(p,i){p.style.display=i===idx?'':'none';});
+  });
+
+  document.querySelectorAll('.qml-swipeview, .qml-stackview').forEach(function(s){
+    var idx=parseInt(s.getAttribute('data-qml-currentindex')||'0',10);
+    if(isNaN(idx)||idx<0)idx=0;
+    var panels=Array.prototype.filter.call(s.children,function(c){return c.classList.contains('qml-node');});
+    panels.forEach(function(p,i){p.style.display=i===idx?'':'none';});
+  });
+
+  document.querySelectorAll('.qml-tableview,.qml-treeview').forEach(function(view){
+    var rows=rowsForStructuredView(view);
+    if(view.classList.contains('qml-tableview'))refreshTableView(view,rows);
+    else refreshTreeView(view,rows);
+  });
+
+  document.querySelectorAll('.qml-listview').forEach(function(view){
+    var idx=parseInt(view.getAttribute('data-qml-currentindex')||'-1',10);
+    view.querySelectorAll('.qml-itemdelegate').forEach(function(item){
+      var selected=parseInt(item.getAttribute('data-qml-index')||'-1',10)===idx;
+      item.style.background=selected?'var(--qml-combo-dd-sel-bg)':'';
+      item.style.fontWeight=selected?'600':'';
+    });
+  });
+
+  Object.keys(Runtime.stateDefs).forEach(function(ownerId){
+    var owner=Runtime.ids[ownerId];
+    if(!owner)return;
+    var stateName=owner.state;
+    if(stateName){applyState(ownerId,String(stateName));}
   });
 })();
 })();
@@ -492,9 +1954,7 @@ export function emptyPreview(isLight: boolean = true): string {
          height:100vh; font-family:sans-serif; color:${textColor}; background:${bgColor}; }
 </style>
 </head>
-<body>
-<div>Click "Refresh Preview" to render QML content</div>
-</body>
+<body></body>
 </html>`
 }
 

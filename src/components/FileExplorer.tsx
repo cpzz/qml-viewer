@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 import type { FileItem } from '../electron/fileOps'
+import { useI18n } from '../i18n'
 
 interface FileExplorerProps {
   items: FileItem[]
@@ -16,6 +17,7 @@ function FileTreeItem({
   onOpenFile: (path: string) => void
   onRemoveItem: (path: string) => void
 }) {
+  const { t } = useI18n()
   const [expanded, setExpanded] = useState(false)
   const [children, setChildren] = useState<FileItem[] | null>(null)
   const [loading, setLoading] = useState(false)
@@ -61,7 +63,7 @@ function FileTreeItem({
         <button
           className="file-tree-remove"
           onClick={(e) => { e.stopPropagation(); onRemoveItem(item.path) }}
-          title="Remove"
+          title={t('fileExplorer.remove')}
         >
           &#10005;
         </button>
@@ -69,7 +71,7 @@ function FileTreeItem({
       {item.type === 'directory' && expanded && (
         <div className="file-tree-children">
           {loading ? (
-            <div className="file-tree-status">Loading...</div>
+            <div className="file-tree-status">{t('fileExplorer.loading')}</div>
           ) : children && children.length > 0 ? (
             children.map((child) => (
               <FileTreeItem
@@ -80,7 +82,7 @@ function FileTreeItem({
               />
             ))
           ) : (
-            <div className="file-tree-status">Empty directory</div>
+            <div className="file-tree-status">{t('fileExplorer.emptyDirectory')}</div>
           )}
         </div>
       )}
@@ -89,14 +91,15 @@ function FileTreeItem({
 }
 
 export default function FileExplorer({ items, onOpenFile, onRemoveItem }: FileExplorerProps) {
+  const { t } = useI18n()
   return (
     <div className="file-explorer">
       <div className="file-explorer-header">
-        <span className="file-explorer-title">FILES</span>
+        <span className="file-explorer-title">{t('fileExplorer.files')}</span>
       </div>
       <div className="file-explorer-list">
         {items.length === 0 ? (
-          <div className="file-explorer-empty">Drop files here</div>
+          <div className="file-explorer-empty">{t('fileExplorer.dropFiles')}</div>
         ) : (
           items.map((item) => (
             <FileTreeItem

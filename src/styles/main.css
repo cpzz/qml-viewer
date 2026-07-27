@@ -225,6 +225,10 @@ body {
   overflow: hidden;
 }
 
+.workbench-hover-container[data-find-input-hover="true"] {
+  display: none !important;
+}
+
 /* ===== Preview Panel ===== */
 
 .preview-panel {
@@ -241,11 +245,32 @@ body {
 }
 
 .preview-iframe {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   border: none;
   background: var(--bg-primary);
   display: block;
+}
+
+.preview-iframe-active {
+  z-index: 2;
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.preview-iframe-buffer {
+  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.preview-error {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  background: var(--bg-primary);
 }
 
 /* ===== File List Panel ===== */

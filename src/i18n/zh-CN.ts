@@ -1,9 +1,33 @@
 export default {
   toolbar: {
-    new: '新建',
-    open: '打开',
-    save: '保存',
+    hideFileList: '隐藏文件列表',
+    showFileList: '显示文件列表',
+    new: '新建文件',
+    openFile: '打开文件',
+    openDirectory: '打开目录',
+    save: '保存文件',
+    refresh: '刷新',
     theme: '切换明亮/暗色模式',
-    language: 'English',
+    language: 'Swith to English',
+  },
+  fileExplorer: {
+    files: '文件',
+    dropFiles: '拖放文件到此处',
+    remove: '移除',
+    loading: '正在加载...',
+    emptyDirectory: '空目录',
+  },
+  editor: {
+    findReplace: '查找 / 替换',
+    find: '查找',
+    replace: '替换',
+  },
+  alerts: {
+    unsupportedOpenFiles: '当前浏览器不支持直接打开文件，请使用支持 File System Access API 的浏览器。',
+    unsupportedOpenDirectory: '当前浏览器不支持目录直接访问，请使用支持 File System Access API 的浏览器。',
+    unsupportedSaveFile: '当前浏览器不支持直接保存到文件，请使用支持 File System Access API 的浏览器。',
+    createFileFailed: '文件已加入列表，但写入文件失败，请点击“保存文件”重试。',
+    confirmRefresh: '是否从磁盘重新加载文件并放弃未保存的修改？',
+    refreshFailed: '无法从磁盘重新加载文件。',
   },
 }

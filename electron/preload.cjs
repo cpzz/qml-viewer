@@ -30,6 +30,8 @@ window.addEventListener('drop', handlePreloadDrop, true)
 contextBridge.exposeInMainWorld('electronAPI', {
   newFile: () => ipcRenderer.invoke('file:new'),
   openFile: () => ipcRenderer.invoke('file:open'),
+  openFiles: () => ipcRenderer.invoke('file:openFiles'),
+  openDirectory: () => ipcRenderer.invoke('file:openDirectory'),
   saveFile: (content, filePath) => ipcRenderer.invoke('file:save', content, filePath),
   readFileByPath: (filePath) => ipcRenderer.invoke('file:readByPath', filePath),
   readDirectory: (dirPath) => ipcRenderer.invoke('file:readDirectory', dirPath),

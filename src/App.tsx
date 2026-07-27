@@ -1,20 +1,22 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react'
+import React, { useState, useCallback, useEffect, useRef, Suspense, lazy } from 'react'
 import Toolbar from './components/Toolbar'
 import SplitPane from './components/SplitPane'
-import EditorPanel from './components/EditorPanel'
 import PreviewPanel from './components/PreviewPanel'
 import FileExplorer from './components/FileExplorer'
+import { useI18n } from './i18n'
 import type { FileTab } from './components/FileList'
 import type { FileItem } from '../electron/fileOps'
-import exampleQml from './example.qml?raw'
 
-const DEFAULT_CODE = exampleQml
+const NEW_FILE_CONTENT = ''
 
 declare global {
   interface Window {
     electronAPI?: {
       newFile: () => Promise<{ content: string; filePath: string } | null>
       openFile: () => Promise<{ content: string; filePath: string } | null>
+      openFiles: () => Promise<Array<{ content: string; filePath: string }>
+      >
+      openDirectory: () => Promise<Array<{ name: string; path: string; type: 'file' | 'directory' }>>
       saveFile: (content: string, filePath?: string | null) => Promise<string | null>
       readFileByPath: (filePath: string) => Promise<{ content: string; filePath: string } | null>
       readDirectory: (dirPath: string) => Promise<Array<{ name: string; path: string; type: 'file' | 'directory' }>>
@@ -27,16 +29,23 @@ declare global {
 let _tabId = 1
 function nextId(): string { return 'tab-' + (_tabId++) }
 
+const EditorPanel = lazy(() => import('./components/EditorPanel'))
+
 export default function App() {
+  const { t } = useI18n()
   const [files, setFiles] = useState<FileTab[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isLight, setIsLight] = useState(false)
   const [showFileList, setShowFileList] = useState(true)
   const [fileListWidth, setFileListWidth] = useState(200)
   const [isDraggingFL, setIsDraggingFL] = useState(false)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [fileItems, setFileItems] = useState<FileItem[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
   const filesRef = useRef(files)
+  const browserFileStoreRef = useRef<Map<string, string>>(new Map())
+  const browserFileHandleRef = useRef<Map<string, any>>(new Map())
+  const tabFileHandleRef = useRef<Map<string, any>>(new Map())
   filesRef.current = files
   const initializedRef = useRef(false)
 
@@ -48,18 +57,23 @@ export default function App() {
       id: nextId(),
       name: 'untitled.qml',
       path: null,
-      content: DEFAULT_CODE,
-      originalContent: DEFAULT_CODE,
+      content: NEW_FILE_CONTENT,
+      originalContent: NEW_FILE_CONTENT,
     }
     setFiles([tab])
     setActiveId(tab.id)
   }, [])
 
   const activeTab = files.find((f) => f.id === activeId) ?? null
-  const code = activeTab?.content ?? DEFAULT_CODE
-  const initialCode = activeTab?.originalContent ?? DEFAULT_CODE
-  const currentFilePath = activeTab?.path ?? null
+  const code = activeTab?.content ?? NEW_FILE_CONTENT
+  const initialCode = activeTab?.originalContent ?? NEW_FILE_CONTENT
   const hasChanges = code !== initialCode
+  const hasRefreshSource = !!activeTab && (
+    (!!window.electronAPI?.readFileByPath && !!activeTab.path) ||
+    tabFileHandleRef.current.has(activeTab.id) ||
+    (!!activeTab.path && browserFileHandleRef.current.has(activeTab.path))
+  )
+  const canRefresh = hasChanges && hasRefreshSource && !isRefreshing
 
   // --- File list drag resize ---
 
@@ -82,96 +96,132 @@ export default function App() {
     }
   }, [isDraggingFL])
 
+  // --- File tree callbacks ---
+
+  const addFileItems = useCallback((itemsToAdd: FileItem[]) => {
+    setFileItems(prev => {
+      const existing = new Set(prev.map(i => i.path))
+      const uniqueItems = itemsToAdd.filter(i => !existing.has(i.path))
+      if (uniqueItems.length === 0) return prev
+      return [...prev, ...uniqueItems]
+    })
+  }, [])
+
   // --- Drag and drop files (window-level) ---
 
   useEffect(() => {
-    console.log('[drag] effect mounted, electronAPI:', !!window.electronAPI, 'statBatch:', typeof window.electronAPI?.statBatch)
-
     const handleDragOver = (e: DragEvent) => {
-      console.log('[drag] dragover event')
       e.preventDefault()
     }
 
     const handleDrop = async (e: DragEvent) => {
-      console.log('[drag] drop event fired!')
       e.preventDefault()
-      const paths: string[] = []
-      const fileList: Array<{ file: File; name: string }> = []
 
-      if (e.dataTransfer?.files) {
-        for (let i = 0; i < e.dataTransfer.files.length; i++) {
-          const f = e.dataTransfer.files[i]
-          const p = (f as any).path
-          console.log('[drag] dropped file:', f.name, 'path:', p, 'size:', f.size)
-          if (p) {
-            paths.push(p)
-          } else {
-            // Electron v43+ contextIsolation 下 File.path 不可用，直接读取内容
-            if (f.name.toLowerCase().endsWith('.qml')) {
-              fileList.push({ file: f, name: f.name })
-            }
-          }
-        }
+      if (window.electronAPI?.onFilesDropped) {
+        return
       }
-      console.log('[drag] extracted paths:', paths, 'fileList:', fileList.length)
 
-      // 处理有真实路径的文件（旧方式兼容）
-      if (paths.length > 0 && window.electronAPI?.statBatch) {
-        const results = await window.electronAPI.statBatch(paths)
-        console.log('[drag] statBatch results:', JSON.stringify(results))
-        setFileItems(prev => {
-          const existing = new Set(prev.map(i => i.path))
-          const toAdd = results.filter(i => !existing.has(i.path))
-          return [...prev, ...toAdd]
+      const dataItems = Array.from(e.dataTransfer?.items || [])
+      const fsItems = dataItems.filter(item => item.kind === 'file' && typeof (item as any).getAsFileSystemHandle === 'function')
+      if (fsItems.length === 0) {
+        window.alert(t('alerts.unsupportedOpenFiles'))
+        return
+      }
+
+      const existingPaths = new Set<string>([
+        ...Array.from(browserFileStoreRef.current.keys()),
+        ...filesRef.current.map(f => f.path).filter((p): p is string => !!p),
+      ])
+
+      const getUniquePath = (basePath: string) => {
+        if (!existingPaths.has(basePath)) {
+          existingPaths.add(basePath)
+          return basePath
+        }
+        const dotIndex = basePath.lastIndexOf('.')
+        const base = dotIndex > 0 ? basePath.slice(0, dotIndex) : basePath
+        const ext = dotIndex > 0 ? basePath.slice(dotIndex) : ''
+        let idx = 1
+        let candidate = `${base} (${idx})${ext}`
+        while (existingPaths.has(candidate)) {
+          idx += 1
+          candidate = `${base} (${idx})${ext}`
+        }
+        existingPaths.add(candidate)
+        return candidate
+      }
+
+      const loadedItems: FileItem[] = []
+
+      const loadFileHandle = async (fileHandle: any, preferredPath?: string) => {
+        const file = await fileHandle.getFile()
+        if (!file.name.toLowerCase().endsWith('.qml')) return
+        const path = getUniquePath(preferredPath || `web:/${file.name}`)
+        const content = await file.text()
+        browserFileStoreRef.current.set(path, content)
+        browserFileHandleRef.current.set(path, fileHandle)
+        loadedItems.push({
+          name: path.split(/[\\/]/).pop() || file.name,
+          path,
+          type: 'file',
         })
-        if (results.length === 1 && results[0].type === 'file') {
-          const single = results[0]
-          const currentFiles = filesRef.current
-          const content = await window.electronAPI.readFileByPath(single.path)
-          if (content) {
-            const existing = currentFiles.find(f => f.path === single.path)
-            if (existing) {
-              setActiveId(existing.id)
-            } else {
-              const tab: FileTab = {
-                id: 'tab-' + (_tabId++),
-                name: single.name,
-                path: single.path,
-                content: content.content,
-                originalContent: content.content,
-              }
-              setFiles(prev => [...prev, tab])
-              setActiveId(tab.id)
-            }
+      }
+
+      const walkDir = async (dirHandle: any, prefix: string) => {
+        for await (const entry of dirHandle.values()) {
+          const nextPrefix = prefix ? `${prefix}/${entry.name}` : entry.name
+          if (entry.kind === 'directory') {
+            await walkDir(entry, nextPrefix)
+            continue
+          }
+          if (entry.kind === 'file') {
+            await loadFileHandle(entry, `web:/${nextPrefix}`)
           }
         }
       }
 
-      // 处理无路径的文件（直接从 renderer 读取内容）
-      for (const entry of fileList) {
-        const content = await entry.file.text()
-        const virtualPath = 'dropped:' + entry.name
-        setFileItems(prev => {
-          if (prev.some(i => i.path === virtualPath)) return prev
-          return [...prev, { path: virtualPath, name: entry.name, type: 'file' }]
-        })
-        const currentFiles = filesRef.current
-        const existing = currentFiles.find(f => f.path === virtualPath)
-        if (!existing) {
-          const tab: FileTab = {
-            id: 'tab-' + (_tabId++),
-            name: entry.name,
-            path: virtualPath,
-            content,
-            originalContent: content,
-          }
-          setFiles(prev => [...prev, tab])
-          setActiveId(tab.id)
+      for (const item of fsItems) {
+        let handle: any = null
+        try {
+          handle = await (item as any).getAsFileSystemHandle()
+        } catch {
+          handle = null
+        }
+        if (!handle) continue
+        if (handle.kind === 'directory') {
+          await walkDir(handle, handle.name || '')
+        } else if (handle.kind === 'file') {
+          await loadFileHandle(handle)
         }
       }
+
+      if (loadedItems.length === 0) return
+
+      addFileItems(loadedItems)
+      const firstPath = loadedItems[0].path
+      const currentFiles = filesRef.current
+      const existing = currentFiles.find(f => f.path === firstPath)
+      if (existing) {
+        setActiveId(existing.id)
+        return
+      }
+      const content = browserFileStoreRef.current.get(firstPath)
+      if (content == null) return
+      const tab: FileTab = {
+        id: 'tab-' + (_tabId++),
+        name: firstPath.split(/[\\/]/).pop() || 'unknown.qml',
+        path: firstPath,
+        content,
+        originalContent: content,
+      }
+      const webHandle = browserFileHandleRef.current.get(firstPath)
+      if (webHandle) {
+        tabFileHandleRef.current.set(tab.id, webHandle)
+      }
+      setFiles(prev => [...prev, tab])
+      setActiveId(tab.id)
     }
 
-    // 使用 capture phase 确保在 Electron 默认行为之前截获
     window.addEventListener('dragover', handleDragOver, true)
     window.addEventListener('drop', handleDrop, true)
     document.addEventListener('dragover', handleDragOver, true)
@@ -182,66 +232,224 @@ export default function App() {
       document.removeEventListener('dragover', handleDragOver, true)
       document.removeEventListener('drop', handleDrop, true)
     }
-  }, [])
+  }, [addFileItems, t])
 
   // --- 监听 preload 通过 IPC 发送的拖拽路径 ---
   useEffect(() => {
     if (!window.electronAPI?.onFilesDropped) return
     window.electronAPI.onFilesDropped(async (paths) => {
-      console.log('[App] onFilesDropped received:', paths)
       const results = await window.electronAPI!.statBatch(paths)
-      console.log('[App] statBatch results:', JSON.stringify(results))
-      setFileItems(prev => {
-        const existing = new Set(prev.map(i => i.path))
-        const toAdd = results.filter(i => !existing.has(i.path))
-        return [...prev, ...toAdd]
-      })
-      if (results.length === 1 && results[0].type === 'file') {
-        const single = results[0]
-        const currentFiles = filesRef.current
-        const content = await window.electronAPI!.readFileByPath(single.path)
-        if (content) {
-          const existing = currentFiles.find(f => f.path === single.path)
-          if (existing) {
-            setActiveId(existing.id)
-          } else {
-            const tab: FileTab = {
-              id: 'tab-' + (_tabId++),
-              name: single.name,
-              path: single.path,
-              content: content.content,
-              originalContent: content.content,
-            }
-            setFiles(prev => [...prev, tab])
-            setActiveId(tab.id)
+      const qmlItems = results.filter(item => item.type === 'file' && item.name.toLowerCase().endsWith('.qml'))
+      if (qmlItems.length === 0) return
+
+      addFileItems(qmlItems)
+
+      const first = qmlItems[0]
+      const currentFiles = filesRef.current
+      const existing = currentFiles.find(f => f.path === first.path)
+      if (existing) {
+        setActiveId(existing.id)
+        return
+      }
+
+      const content = await window.electronAPI!.readFileByPath(first.path)
+      if (!content) return
+      const tab: FileTab = {
+        id: 'tab-' + (_tabId++),
+        name: first.name,
+        path: first.path,
+        content: content.content,
+        originalContent: content.content,
+      }
+      setFiles(prev => [...prev, tab])
+      setActiveId(tab.id)
+    })
+  }, [addFileItems])
+
+  const getUniqueWebPath = useCallback((basePath: string) => {
+    const existingPaths = new Set(fileItems.map(i => i.path))
+    if (!existingPaths.has(basePath)) return basePath
+    const dotIndex = basePath.lastIndexOf('.')
+    const base = dotIndex > 0 ? basePath.slice(0, dotIndex) : basePath
+    const ext = dotIndex > 0 ? basePath.slice(dotIndex) : ''
+    let idx = 1
+    let candidate = `${base} (${idx})${ext}`
+    while (existingPaths.has(candidate)) {
+      idx += 1
+      candidate = `${base} (${idx})${ext}`
+    }
+    return candidate
+  }, [fileItems])
+
+  const loadWebFileHandle = useCallback(async (handle: any, preferredPath?: string) => {
+    const file = await handle.getFile()
+    if (!file.name.toLowerCase().endsWith('.qml')) return null
+    const content = await file.text()
+    const basePath = preferredPath || `web:/${file.name}`
+    const filePath = getUniqueWebPath(basePath)
+    browserFileStoreRef.current.set(filePath, content)
+    browserFileHandleRef.current.set(filePath, handle)
+    return { filePath, content }
+  }, [getUniqueWebPath])
+
+  const openWebFilesWithHandles = useCallback(async () => {
+    const picker = (window as any).showOpenFilePicker
+    if (!picker) {
+      window.alert(t('alerts.unsupportedOpenFiles'))
+      return [] as Array<{ filePath: string; content: string }>
+    }
+    const handles: any[] = await picker({
+      multiple: true,
+      types: [{ description: 'QML Files', accept: { 'text/plain': ['.qml'] } }],
+      excludeAcceptAllOption: true,
+    })
+    const loaded = await Promise.all(handles.map(handle => loadWebFileHandle(handle)))
+    return loaded.filter((item): item is { filePath: string; content: string } => !!item)
+  }, [loadWebFileHandle])
+
+  const openWebDirectoryWithHandles = useCallback(async () => {
+    const picker = (window as any).showDirectoryPicker
+    if (!picker) {
+      window.alert(t('alerts.unsupportedOpenDirectory'))
+      return [] as Array<{ name: string; path: string; type: 'file' | 'directory' }>
+    }
+
+    const root = await picker()
+    const results: Array<{ name: string; path: string; type: 'file' | 'directory' }> = []
+
+    const walk = async (dirHandle: any, prefix: string) => {
+      for await (const entry of dirHandle.values()) {
+        const nextPrefix = prefix ? `${prefix}/${entry.name}` : entry.name
+        if (entry.kind === 'directory') {
+          await walk(entry, nextPrefix)
+          continue
+        }
+        if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.qml')) {
+          const loaded = await loadWebFileHandle(entry, `web:/${nextPrefix}`)
+          if (loaded) {
+            results.push({
+              name: loaded.filePath.split(/[\\/]/).pop() || entry.name,
+              path: loaded.filePath,
+              type: 'file',
+            })
           }
         }
       }
-    })
-  }, [])
+    }
 
-  // --- File tree callbacks ---
+    await walk(root, '')
+    return results
+  }, [loadWebFileHandle])
 
-  const handleOpenFileFromExplorer = useCallback(async (filePath: string) => {
-    const existing = files.find(f => f.path === filePath)
+  const saveTab = useCallback(async (tab: FileTab): Promise<boolean> => {
+    if (!window.electronAPI?.saveFile) {
+      const savePicker = (window as any).showSaveFilePicker
+      if (!savePicker) {
+        window.alert(t('alerts.unsupportedSaveFile'))
+        return false
+      }
+
+      let pathToSave = tab.path || `web:/${tab.name}`
+      let handle = tabFileHandleRef.current.get(tab.id) || (pathToSave ? browserFileHandleRef.current.get(pathToSave) : null)
+      if (!handle) {
+        handle = await savePicker({
+          suggestedName: tab.name.toLowerCase().endsWith('.qml') ? tab.name : `${tab.name}.qml`,
+          types: [{ description: 'QML Files', accept: { 'text/plain': ['.qml'] } }],
+          excludeAcceptAllOption: true,
+        })
+        const selectedName = handle?.name || tab.name
+        pathToSave = pathToSave.startsWith('web:/') ? pathToSave : `web:/${selectedName}`
+      }
+
+      browserFileHandleRef.current.set(pathToSave, handle)
+      tabFileHandleRef.current.set(tab.id, handle)
+
+      const writable = await handle.createWritable()
+      await writable.write(tab.content)
+      await writable.close()
+
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === tab.id
+            ? { ...f, path: pathToSave, name: handle.name || f.name, originalContent: f.content, isNew: false }
+            : f
+        )
+      )
+      browserFileStoreRef.current.set(pathToSave, tab.content)
+      addFileItems([{ name: handle.name || tab.name, path: pathToSave, type: 'file' }])
+      return true
+    }
+
+    const savedPath = await window.electronAPI.saveFile(tab.content, tab.path)
+    if (!savedPath) return false
+
+    setFiles((prev) =>
+      prev.map((f) =>
+        f.id === tab.id
+          ? { ...f, path: savedPath, originalContent: f.content, name: savedPath.split(/[\\/]/).pop() || f.name, isNew: false }
+          : f
+      )
+    )
+    return true
+  }, [addFileItems])
+
+  const ensureCurrentSavedBeforeSwitch = useCallback(async (nextFilePath: string): Promise<boolean> => {
+    const current = filesRef.current.find(f => f.id === activeId)
+    if (!current) return true
+    if (current.path === nextFilePath) return true
+
+    const hasUnsaved = current.content !== current.originalContent
+    if (!hasUnsaved) return true
+
+    const shouldSave = window.confirm('当前文件有未保存内容，是否先保存再切换？')
+    if (!shouldSave) return true
+
+    return await saveTab(current)
+  }, [activeId, saveTab])
+
+  const openPathInTab = useCallback(async (filePath: string) => {
+    const existing = filesRef.current.find(f => f.path === filePath)
     if (existing) {
       setActiveId(existing.id)
       return
     }
-    const content = await window.electronAPI?.readFileByPath(filePath)
-    if (!content) return
+    let contentText: string | null = null
+    if (window.electronAPI?.readFileByPath) {
+      const content = await window.electronAPI.readFileByPath(filePath)
+      contentText = content?.content ?? null
+    } else {
+      contentText = browserFileStoreRef.current.get(filePath) ?? null
+    }
+    if (!contentText) return
     const tab: FileTab = {
       id: 'tab-' + (_tabId++),
       name: filePath.split(/[\\/]/).pop() || 'unknown.qml',
       path: filePath,
-      content: content.content,
-      originalContent: content.content,
+      content: contentText,
+      originalContent: contentText,
+    }
+    const webHandle = browserFileHandleRef.current.get(filePath)
+    if (webHandle) {
+      tabFileHandleRef.current.set(tab.id, webHandle)
     }
     setFiles(prev => [...prev, tab])
     setActiveId(tab.id)
-  }, [files])
+  }, [])
+
+  const handleOpenFileFromExplorer = useCallback(async (filePath: string) => {
+    const canSwitch = await ensureCurrentSavedBeforeSwitch(filePath)
+    if (!canSwitch) return
+    await openPathInTab(filePath)
+  }, [ensureCurrentSavedBeforeSwitch, openPathInTab])
 
   const handleRemoveFileItem = useCallback((path: string) => {
+    browserFileStoreRef.current.delete(path)
+    browserFileHandleRef.current.delete(path)
+    for (const file of filesRef.current) {
+      if (file.path === path) {
+        tabFileHandleRef.current.delete(file.id)
+      }
+    }
     setFileItems(prev => prev.filter(i => i.path !== path))
     setFiles(prev => {
       const toClose = prev.find(f => f.path === path)
@@ -265,7 +473,57 @@ export default function App() {
   // --- File operations ---
 
   const handleNew = useCallback(async () => {
-    const result = await window.electronAPI?.newFile()
+    if (!window.electronAPI?.newFile) {
+      const savePicker = (window as any).showSaveFilePicker
+      if (!savePicker) {
+        window.alert(t('alerts.unsupportedSaveFile'))
+        return
+      }
+
+      let handle: any
+      try {
+        handle = await savePicker({
+          suggestedName: 'untitled.qml',
+          types: [{ description: 'QML Files', accept: { 'text/plain': ['.qml'] } }],
+          excludeAcceptAllOption: true,
+        })
+      } catch {
+        return
+      }
+
+      const webPath = getUniqueWebPath(`web:/${handle.name || 'untitled.qml'}`)
+      browserFileStoreRef.current.set(webPath, NEW_FILE_CONTENT)
+      browserFileHandleRef.current.set(webPath, handle)
+
+      const tab: FileTab = {
+        id: 'tab-' + (_tabId++),
+        name: handle.name || 'untitled.qml',
+        path: webPath,
+        content: NEW_FILE_CONTENT,
+        originalContent: NEW_FILE_CONTENT,
+        isNew: true,
+      }
+      tabFileHandleRef.current.set(tab.id, handle)
+      setFiles((prev) => [...prev, tab])
+      setActiveId(tab.id)
+      addFileItems([{ name: tab.name, path: webPath, type: 'file' }])
+
+      try {
+        const writable = await handle.createWritable()
+        await writable.write(NEW_FILE_CONTENT)
+        await writable.close()
+        setFiles((prev) =>
+          prev.map((f) =>
+            f.id === tab.id ? { ...f, originalContent: NEW_FILE_CONTENT, isNew: false } : f
+          )
+        )
+      } catch {
+        window.alert(t('alerts.createFileFailed'))
+      }
+      return
+    }
+
+    const result = await window.electronAPI.newFile()
     if (!result) return
     const tab: FileTab = {
       id: 'tab-' + (_tabId++),
@@ -273,43 +531,92 @@ export default function App() {
       path: result.filePath,
       content: result.content,
       originalContent: result.content,
+      isNew: false,
     }
     setFiles((prev) => [...prev, tab])
     setActiveId(tab.id)
-  }, [])
+    if (tab.path) {
+      addFileItems([{ name: tab.name, path: tab.path, type: 'file' }])
+    }
+  }, [addFileItems])
 
-  const handleOpen = useCallback(async () => {
-    const result = await window.electronAPI?.openFile()
-    if (!result) return
-    const existing = files.find((f) => f.path === result.filePath)
-    if (existing) {
-      setActiveId(existing.id)
-      return
+  const handleOpenFiles = useCallback(async () => {
+    let results: Array<{ content: string; filePath: string }> = []
+    if (window.electronAPI?.openFiles) {
+      results = await window.electronAPI.openFiles()
+    } else {
+      results = await openWebFilesWithHandles()
     }
-    const tab: FileTab = {
-      id: 'tab-' + (_tabId++),
-      name: result.filePath.split(/[\\/]/).pop() || 'unknown.qml',
-      path: result.filePath,
-      content: result.content,
-      originalContent: result.content,
+    if (!results || results.length === 0) return
+
+    addFileItems(results.map((item) => ({
+      name: item.filePath.split(/[\\/]/).pop() || 'unknown.qml',
+      path: item.filePath,
+      type: 'file',
+    })))
+
+    await openPathInTab(results[0].filePath)
+  }, [addFileItems, openPathInTab, openWebFilesWithHandles])
+
+  const handleOpenDirectory = useCallback(async () => {
+    let results: Array<{ name: string; path: string; type: 'file' | 'directory' }> = []
+    if (window.electronAPI?.openDirectory) {
+      results = await window.electronAPI.openDirectory()
+    } else {
+      results = await openWebDirectoryWithHandles()
     }
-    setFiles((prev) => [...prev, tab])
-    setActiveId(tab.id)
-  }, [files])
+    if (!results || results.length === 0) return
+
+    const qmlFiles = results.filter(item => item.type === 'file' && item.name.toLowerCase().endsWith('.qml'))
+    if (qmlFiles.length === 0) return
+
+    addFileItems(qmlFiles)
+    await openPathInTab(qmlFiles[0].path)
+  }, [addFileItems, openPathInTab, openWebDirectoryWithHandles])
 
   const handleSave = useCallback(async () => {
     if (!activeTab) return
-    const savedPath = await window.electronAPI?.saveFile(activeTab.content, currentFilePath)
-    if (savedPath) {
-      setFiles((prev) =>
-        prev.map((f) =>
-          f.id === activeTab.id
-            ? { ...f, path: savedPath, originalContent: f.content, name: savedPath.split(/[\\/]/).pop() || f.name }
-            : f
-        )
-      )
+    await saveTab(activeTab)
+  }, [activeTab, saveTab])
+
+  const handleRefresh = useCallback(async () => {
+    if (!activeTab || !hasChanges || !hasRefreshSource || isRefreshing) return
+    if (!window.confirm(t('alerts.confirmRefresh'))) return
+
+    setIsRefreshing(true)
+    try {
+      let refreshedContent: string | null = null
+      if (window.electronAPI?.readFileByPath && activeTab.path) {
+        const result = await window.electronAPI.readFileByPath(activeTab.path)
+        refreshedContent = result?.content ?? null
+      } else {
+        const handle = tabFileHandleRef.current.get(activeTab.id) ||
+          (activeTab.path ? browserFileHandleRef.current.get(activeTab.path) : null)
+        if (handle) {
+          const file = await handle.getFile()
+          refreshedContent = await file.text()
+        }
+      }
+
+      if (refreshedContent == null) {
+        window.alert(t('alerts.refreshFailed'))
+        return
+      }
+
+      if (activeTab.path) {
+        browserFileStoreRef.current.set(activeTab.path, refreshedContent)
+      }
+      setFiles((prev) => prev.map((file) =>
+        file.id === activeTab.id
+          ? { ...file, content: refreshedContent, originalContent: refreshedContent }
+          : file
+      ))
+    } catch {
+      window.alert(t('alerts.refreshFailed'))
+    } finally {
+      setIsRefreshing(false)
     }
-  }, [activeTab, currentFilePath])
+  }, [activeTab, hasChanges, hasRefreshSource, isRefreshing, t])
 
   const handleCodeChange = useCallback((newCode: string) => {
     setFiles((prev) =>
@@ -335,9 +642,12 @@ export default function App() {
         isLight={isLight}
         onToggleTheme={handleToggleTheme}
         onNew={handleNew}
-        onOpen={handleOpen}
+        onOpenFiles={handleOpenFiles}
+        onOpenDirectory={handleOpenDirectory}
         onSave={handleSave}
+        onRefresh={handleRefresh}
         hasChanges={hasChanges}
+        canRefresh={canRefresh}
         showFileList={showFileList}
         onToggleFileList={handleToggleFileList}
       />
@@ -360,7 +670,11 @@ export default function App() {
           </>
         )}
         <SplitPane
-          left={<EditorPanel code={code} onChange={handleCodeChange} isLight={isLight} />}
+          left={
+            <Suspense fallback={<div className="editor-panel"><div className="editor-container" /></div>}>
+              <EditorPanel code={code} onChange={handleCodeChange} isLight={isLight} />
+            </Suspense>
+          }
           right={<PreviewPanel code={code} isLight={isLight} />}
         />
       </div>

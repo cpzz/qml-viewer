@@ -19,6 +19,10 @@ export default function SplitPane({ left, right }: SplitPaneProps) {
     if (!isDragging) return
 
     const handleMouseMove = (e: MouseEvent) => {
+      if ((e.buttons & 1) === 0) {
+        setIsDragging(false)
+        return
+      }
       if (!containerRef.current) return
       const rect = containerRef.current.getBoundingClientRect()
       const newWidth = e.clientX - rect.left
@@ -30,11 +34,19 @@ export default function SplitPane({ left, right }: SplitPaneProps) {
       setIsDragging(false)
     }
 
+    const handleWindowBlur = () => {
+      setIsDragging(false)
+    }
+
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleMouseUp)
+    window.addEventListener('mouseup', handleMouseUp, true)
+    window.addEventListener('blur', handleWindowBlur)
     return () => {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
+      window.removeEventListener('mouseup', handleMouseUp, true)
+      window.removeEventListener('blur', handleWindowBlur)
     }
   }, [isDragging])
 

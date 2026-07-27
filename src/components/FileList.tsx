@@ -7,6 +7,7 @@ export interface FileTab {
   path: string | null
   content: string
   originalContent: string
+  isNew?: boolean
 }
 
 interface FileListProps {

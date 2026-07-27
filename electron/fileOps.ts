@@ -34,3 +34,28 @@ export async function readDirectory(dirPath: string): Promise<FileItem[]> {
       type: entry.isDirectory() ? 'directory' as const : 'file' as const,
     }))
 }
+
+export async function listQmlFilesInDirectory(dirPath: string): Promise<FileItem[]> {
+  const result: FileItem[] = []
+
+  async function walk(currentPath: string): Promise<void> {
+    const entries = await readdir(currentPath, { withFileTypes: true })
+    for (const entry of entries) {
+      const fullPath = join(currentPath, entry.name)
+      if (entry.isDirectory()) {
+        await walk(fullPath)
+        continue
+      }
+      if (entry.isFile() && extname(entry.name).toLowerCase() === '.qml') {
+        result.push({
+          name: entry.name,
+          path: fullPath,
+          type: 'file',
+        })
+      }
+    }
+  }
+
+  await walk(dirPath)
+  return result
+}
