@@ -3,6 +3,7 @@ import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/base/browser/ui/codicons/codiconStyles'
 import 'monaco-editor/esm/vs/editor/contrib/find/browser/findController'
 import 'monaco-editor/esm/vs/editor/contrib/folding/browser/folding'
+import 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController'
 import { registerQMLLanguage } from '../utils/qmlLang'
 import { useI18n } from '../i18n'
 
@@ -52,6 +53,10 @@ export default function EditorPanel({ code, onChange, isLight }: EditorPanelProp
       lineNumbers: 'on',
       folding: true,
       showFoldingControls: 'mouseover',
+      quickSuggestions: { other: true, comments: false, strings: false },
+      suggestOnTriggerCharacters: true,
+      tabCompletion: 'on',
+      snippetSuggestions: 'top',
       scrollBeyondLastLine: false,
       wordWrap: 'on',
       find: {

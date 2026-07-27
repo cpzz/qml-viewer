@@ -1,6 +1,11 @@
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import { registerQMLCompletionProvider } from './qmlCompletion'
+
+let registered = false
 
 export function registerQMLLanguage() {
+  if (registered) return
+  registered = true
   // Register QML language
   monaco.languages.register({ id: 'qml' })
 
@@ -119,4 +124,6 @@ export function registerQMLLanguage() {
       { open: "'", close: "'" },
     ],
   })
+
+  registerQMLCompletionProvider()
 }
