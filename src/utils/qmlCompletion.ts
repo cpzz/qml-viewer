@@ -320,7 +320,6 @@ function topLevelItems(
     .filter(pragma => !existingPragmas.has(pragma))
     .map(pragma => ({
       label: `pragma ${pragma}`,
-      filterText: pragma,
       kind: monaco.languages.CompletionItemKind.Keyword,
       detail: 'Add QML pragma before imports',
       insertText: '',
@@ -332,7 +331,6 @@ function topLevelItems(
     .filter(moduleName => !importedModules.has(moduleName))
     .map(moduleName => ({
       label: `import ${moduleName}`,
-      filterText: moduleName,
       kind: monaco.languages.CompletionItemKind.Module,
       detail: 'Add QML module import at the top of the file',
       insertText: '',
@@ -494,6 +492,7 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
           sortText: `3-${snippet.label}`,
         })))
       }
+      suggestions.push(...topLevelItems(model, source, range))
       return { suggestions }
     },
   })
