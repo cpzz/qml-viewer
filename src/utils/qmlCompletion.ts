@@ -27,6 +27,8 @@ interface ContextHelpRequest {
 
 let contextHelpRequest: ContextHelpRequest | null = null
 
+const qmlColorValues = ['transparent', 'white', 'black', 'red', 'green', 'blue', 'steelblue']
+
 function showQMLHelp(editor: monaco.editor.IStandaloneCodeEditor, kind: ContextHelpRequest['kind']): void {
   const model = editor.getModel()
   const position = editor.getPosition()
@@ -125,7 +127,8 @@ function scanStructure(source: string, cursorOffset: number): QmlDocumentContext
 
 function snippetForProperty(item: QmlPropertyDefinition): string {
   if (item.kind === 'handler') return `${item.name}: {\n\t$0\n}`
-  if (item.kind === 'string' || item.kind === 'color') return `${item.name}: "\${1}"`
+  if (item.kind === 'string') return `${item.name}: "\${1}"`
+  if (item.kind === 'color') return `${item.name}: `
   if (item.kind === 'boolean') return `${item.name}: \${1|true,false|}`
   if (item.kind === 'number') return `${item.name}: \${1:0}`
   if (item.kind === 'enum' && item.values?.length) return `${item.name}: \${1:${item.values[0]}}`
@@ -146,6 +149,10 @@ function propertyItems(properties: QmlPropertyDefinition[], range: monaco.Range)
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     range,
     sortText: `1-${item.name}`,
+    command: item.kind === 'color' ? {
+      id: 'editor.action.triggerSuggest',
+      title: 'Show color values',
+    } : undefined,
   }))
 }
 
@@ -154,6 +161,17 @@ function valueItems(values: string[], range: monaco.Range): monaco.languages.Com
     label: value,
     kind: monaco.languages.CompletionItemKind.EnumMember,
     insertText: value,
+    range,
+    sortText: `0-${value}`,
+  }))
+}
+
+function colorValueItems(range: monaco.Range): monaco.languages.CompletionItem[] {
+  return qmlColorValues.map(value => ({
+    label: value,
+    kind: monaco.languages.CompletionItemKind.Color,
+    insertText: `"${value}"`,
+    detail: 'QML color value',
     range,
     sortText: `0-${value}`,
   }))
@@ -387,7 +405,7 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
           suggestions.push(...valueItems(['parent', ...context.ids.keys()], range))
         }
         if (propertyDefinition?.kind === 'color') {
-          suggestions.push(...valueItems(['transparent', 'white', 'black', 'red', 'green', 'blue', 'steelblue'], range))
+          suggestions.push(...colorValueItems(range))
         }
         return { suggestions }
       }

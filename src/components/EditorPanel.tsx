@@ -3,6 +3,7 @@ import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/base/browser/ui/codicons/codiconStyles'
 import 'monaco-editor/esm/vs/editor/contrib/find/browser/findController'
 import 'monaco-editor/esm/vs/editor/contrib/folding/browser/folding'
+import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens'
 import 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController'
 import { registerQMLLanguage } from '../utils/qmlLang'
 import { showQMLChildHelp, showQMLContextHelp } from '../utils/qmlCompletion'
@@ -48,8 +49,9 @@ export default function EditorPanel({ code, onChange, isLight, readOnly }: Edito
     const editor = monaco.editor.create(containerRef.current, {
       value: code,
       language: 'qml',
-      theme: isLight ? 'vs' : 'vs-dark',
+      theme: isLight ? 'qml-light' : 'qml-dark',
       readOnly,
+      'semanticHighlighting.enabled': true,
       automaticLayout: true,
       minimap: { enabled: false },
       fontSize: 14,
@@ -129,7 +131,7 @@ export default function EditorPanel({ code, onChange, isLight, readOnly }: Edito
   useEffect(() => {
     if (editorRef.current) {
       editorRef.current.updateOptions({
-        theme: isLight ? 'vs' : 'vs-dark',
+        theme: isLight ? 'qml-light' : 'qml-dark',
       })
     }
   }, [isLight])
