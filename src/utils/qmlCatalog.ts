@@ -1,10 +1,24 @@
-export type QmlPropertyKind = 'string' | 'number' | 'boolean' | 'color' | 'enum' | 'expression' | 'handler'
+export type QmlPropertyKind =
+  | 'string'
+  | 'url'
+  | 'number'
+  | 'boolean'
+  | 'color'
+  | 'enum'
+  | 'array'
+  | 'model'
+  | 'component'
+  | 'date'
+  | 'time'
+  | 'expression'
+  | 'handler'
 
 export interface QmlPropertyDefinition {
   name: string
   kind: QmlPropertyKind
   values?: string[]
   detail?: string
+  readOnly?: boolean
 }
 
 export interface QmlTypeDefinition {
@@ -19,7 +33,8 @@ const property = (
   kind: QmlPropertyKind = 'expression',
   values?: string[],
   detail?: string,
-): QmlPropertyDefinition => ({ name, kind, values, detail })
+  readOnly = false,
+): QmlPropertyDefinition => ({ name, kind, values, detail, readOnly })
 
 const commonProperties: QmlPropertyDefinition[] = [
   property('id', 'expression'),
@@ -58,13 +73,20 @@ const clickProperties = [
   property('onClicked', 'handler'), property('onPressed', 'handler'), property('onReleased', 'handler'),
 ]
 
+const selectionModeValues = [
+  'SelectionMode.NoSelection',
+  'SelectionMode.SingleSelection',
+  'SelectionMode.ContiguousSelection',
+  'SelectionMode.ExtendedSelection',
+]
+
 const typeProperties: Record<string, QmlPropertyDefinition[]> = {
-  ApplicationWindow: [property('title', 'string'), property('color', 'color'), property('visible', 'boolean'), property('header'), property('footer')],
+  ApplicationWindow: [property('title', 'string'), property('color', 'color'), property('visible', 'boolean'), property('header', 'component'), property('footer', 'component')],
   Window: [property('title', 'string'), property('color', 'color'), property('visible', 'boolean')],
   Rectangle: [property('color', 'color'), property('radius', 'number'), property('border.width', 'number'), property('border.color', 'color')],
   Text: textProperties,
   Label: textProperties,
-  Image: [property('source', 'string'), property('fillMode', 'enum', ['Image.Stretch', 'Image.PreserveAspectFit', 'Image.PreserveAspectCrop', 'Image.Tile'])],
+  Image: [property('source', 'url'), property('fillMode', 'enum', ['Image.Stretch', 'Image.PreserveAspectFit', 'Image.PreserveAspectCrop', 'Image.Tile'])],
   Row: [property('spacing', 'number'), property('padding', 'number')],
   Column: [property('spacing', 'number'), property('padding', 'number')],
   Flow: [property('spacing', 'number'), property('flow', 'enum', ['Flow.LeftToRight', 'Flow.TopToBottom'])],
@@ -76,7 +98,7 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
   ToolButton: clickProperties,
   DelayButton: [...clickProperties, property('delay', 'number'), property('progress', 'number')],
   CheckBox: [property('text', 'string'), property('checked', 'boolean'), property('onClicked', 'handler'), property('onToggled', 'handler')],
-  RadioButton: [property('text', 'string'), property('checked', 'boolean'), property('Group', 'expression'), property('onClicked', 'handler')],
+  RadioButton: [property('text', 'string'), property('checked', 'boolean'), property('ButtonGroup.group', 'expression'), property('onClicked', 'handler')],
   Switch: [property('text', 'string'), property('checked', 'boolean'), property('onClicked', 'handler'), property('onToggled', 'handler')],
   Slider: [property('from', 'number'), property('to', 'number'), property('value', 'number'), property('stepSize', 'number'), property('orientation', 'enum', ['Qt.Horizontal', 'Qt.Vertical']), property('onValueChanged', 'handler')],
   RangeSlider: [property('from', 'number'), property('to', 'number'), property('first.value', 'number'), property('second.value', 'number'), property('orientation', 'enum', ['Qt.Horizontal', 'Qt.Vertical'])],
@@ -84,37 +106,40 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
   SpinBox: [property('from', 'number'), property('to', 'number'), property('value', 'number'), property('stepSize', 'number'), property('editable', 'boolean'), property('onValueChanged', 'handler')],
   ProgressBar: [property('from', 'number'), property('to', 'number'), property('value', 'number'), property('indeterminate', 'boolean')],
   TextField: [property('text', 'string'), property('placeholderText', 'string'), property('readOnly', 'boolean'), property('echoMode', 'enum', ['TextInput.Normal', 'TextInput.Password', 'TextInput.NoEcho', 'TextInput.PasswordEchoOnEdit']), property('onTextChanged', 'handler'), property('onAccepted', 'handler')],
-  TextInput: [property('text', 'string'), property('readOnly', 'boolean'), property('echoMode', 'enum', ['TextInput.Normal', 'TextInput.Password', 'TextInput.NoEcho']), property('onTextChanged', 'handler'), property('onAccepted', 'handler')],
+  TextInput: [property('text', 'string'), property('readOnly', 'boolean'), property('echoMode', 'enum', ['TextInput.Normal', 'TextInput.Password', 'TextInput.NoEcho', 'TextInput.PasswordEchoOnEdit']), property('onTextChanged', 'handler'), property('onAccepted', 'handler')],
   TextArea: [property('text', 'string'), property('placeholderText', 'string'), property('readOnly', 'boolean'), property('wrapMode', 'enum', ['TextEdit.NoWrap', 'TextEdit.WordWrap', 'TextEdit.WrapAnywhere']), property('onTextChanged', 'handler')],
   TextEdit: [property('text', 'string'), property('readOnly', 'boolean'), property('wrapMode', 'enum', ['TextEdit.NoWrap', 'TextEdit.WordWrap', 'TextEdit.WrapAnywhere']), property('onTextChanged', 'handler')],
-  ComboBox: [property('model'), property('currentIndex', 'number'), property('currentText', 'string'), property('placeholderText', 'string'), property('editable', 'boolean'), property('onActivated', 'handler'), property('onCurrentIndexChanged', 'handler')],
-  ListView: [property('model'), property('delegate'), property('currentIndex', 'number'), property('spacing', 'number'), property('orientation', 'enum', ['ListView.Vertical', 'ListView.Horizontal']), property('onActivated', 'handler')],
-  GridView: [property('model'), property('delegate'), property('currentIndex', 'number'), property('cellWidth', 'number'), property('cellHeight', 'number')],
-  Repeater: [property('model'), property('delegate')],
-  Loader: [property('active', 'boolean'), property('source', 'string'), property('sourceComponent'), property('onLoaded', 'handler')],
+  ComboBox: [property('model', 'model'), property('currentIndex', 'number'), property('currentText', 'string', undefined, 'Read-only current display text', true), property('placeholderText', 'string'), property('editable', 'boolean'), property('onActivated', 'handler'), property('onCurrentIndexChanged', 'handler')],
+  ListView: [property('model', 'model'), property('delegate', 'component'), property('currentIndex', 'number'), property('spacing', 'number'), property('orientation', 'enum', ['ListView.Vertical', 'ListView.Horizontal']), property('onActivated', 'handler')],
+  GridView: [property('model', 'model'), property('delegate', 'component'), property('currentIndex', 'number'), property('cellWidth', 'number'), property('cellHeight', 'number')],
+  Repeater: [property('model', 'model'), property('delegate', 'component')],
+  Loader: [property('active', 'boolean'), property('source', 'url'), property('sourceComponent', 'component'), property('onLoaded', 'handler')],
+  Tumbler: [property('model', 'model'), property('currentIndex', 'number')],
   TabBar: [property('currentIndex', 'number'), property('onCurrentIndexChanged', 'handler')],
   TabButton: clickProperties,
   StackLayout: [property('currentIndex', 'number')],
   SwipeView: [property('currentIndex', 'number'), property('orientation', 'enum', ['Qt.Horizontal', 'Qt.Vertical'])],
-  StackView: [property('currentIndex', 'number'), property('initialItem')],
+  StackView: [property('currentIndex', 'number'), property('initialItem', 'component')],
   SplitView: [property('orientation', 'enum', ['Qt.Horizontal', 'Qt.Vertical'])],
   Dialog: [property('title', 'string'), property('modal', 'boolean'), property('visible', 'boolean'), property('standardButtons', 'enum', ['Dialog.Ok', 'Dialog.Cancel', 'Dialog.Yes', 'Dialog.No', 'Dialog.Close', 'Dialog.Ok | Dialog.Cancel', 'Dialog.Yes | Dialog.No']), property('onAccepted', 'handler'), property('onRejected', 'handler'), property('onOpened', 'handler'), property('onClosed', 'handler')],
   Popup: [property('modal', 'boolean'), property('visible', 'boolean'), property('closePolicy', 'enum', ['Popup.NoAutoClose', 'Popup.CloseOnPressOutside', 'Popup.CloseOnEscape', 'Popup.CloseOnPressOutside | Popup.CloseOnEscape']), property('onOpened', 'handler'), property('onClosed', 'handler')],
   Drawer: [property('edge', 'enum', ['Qt.LeftEdge', 'Qt.RightEdge', 'Qt.TopEdge', 'Qt.BottomEdge']), property('position', 'number'), property('modal', 'boolean')],
   ToolTip: [property('text', 'string'), property('delay', 'number'), property('timeout', 'number'), property('visible', 'boolean')],
   ScrollBar: [property('orientation', 'enum', ['Qt.Horizontal', 'Qt.Vertical']), property('position', 'number'), property('size', 'number'), property('active', 'boolean')],
-  TableView: [property('model'), property('delegate'), property('currentIndex', 'number'), property('columns'), property('headers'), property('editable', 'boolean'), property('selectionMode', 'enum', ['SingleSelection', 'MultiSelection']), property('resizableColumns', 'boolean')],
-  TreeView: [property('model'), property('delegate'), property('currentIndex', 'number'), property('idRole', 'string'), property('parentRole', 'string'), property('textRole', 'string'), property('expanded', 'boolean'), property('selectionMode', 'enum', ['SingleSelection', 'MultiSelection'])],
+  TableView: [property('model', 'model'), property('delegate', 'component'), property('currentIndex', 'number'), property('columns', 'array'), property('headers', 'array'), property('columnWidths', 'array'), property('editable', 'boolean'), property('selectionMode', 'enum', selectionModeValues), property('resizableColumns', 'boolean')],
+  TreeView: [property('model', 'model'), property('delegate', 'component'), property('currentIndex', 'number'), property('idRole', 'string'), property('parentRole', 'string'), property('textRole', 'string'), property('expanded', 'boolean'), property('selectionMode', 'enum', selectionModeValues)],
+  GroupBox: [property('title', 'string')],
+  BusyIndicator: [property('running', 'boolean')],
   Menu: [property('title', 'string'), property('enabled', 'boolean')],
   MenuItem: [...clickProperties, property('shortcut', 'string')],
   Action: [property('text', 'string'), property('enabled', 'boolean'), property('checkable', 'boolean'), property('checked', 'boolean'), property('shortcut', 'string'), property('onTriggered', 'handler')],
   Timer: [property('interval', 'number'), property('running', 'boolean'), property('repeat', 'boolean'), property('triggeredOnStart', 'boolean'), property('onTriggered', 'handler')],
-  Connections: [property('target'), property('enabled', 'boolean')],
-  Calendar: [property('selectedDate'), property('onClicked', 'handler')],
-  DatePicker: [property('date'), property('value'), property('onValueChanged', 'handler')],
-  TimePicker: [property('time'), property('value'), property('onValueChanged', 'handler')],
-  WebEngineView: [property('url', 'string'), property('onLoadingChanged', 'handler')],
-  VideoOutput: [property('source'), property('fillMode', 'enum', ['VideoOutput.Stretch', 'VideoOutput.PreserveAspectFit', 'VideoOutput.PreserveAspectCrop'])],
+  Connections: [property('target', 'expression'), property('enabled', 'boolean')],
+  Calendar: [property('selectedDate', 'date'), property('onClicked', 'handler')],
+  DatePicker: [property('date', 'date'), property('value', 'date'), property('onValueChanged', 'handler')],
+  TimePicker: [property('time', 'time'), property('value', 'time'), property('onValueChanged', 'handler')],
+  WebEngineView: [property('url', 'url'), property('onLoadingChanged', 'handler')],
+  VideoOutput: [property('source', 'expression'), property('fillMode', 'enum', ['VideoOutput.Stretch', 'VideoOutput.PreserveAspectFit', 'VideoOutput.PreserveAspectCrop'])],
 }
 
 const supportedTypes = [
@@ -139,7 +164,14 @@ const methodsByType: Record<string, string[]> = {
 }
 
 export const qmlTypes: QmlTypeDefinition[] = supportedTypes.map(name => {
-  const mergedProperties = [...commonProperties, ...(typeProperties[name] || [])]
+  const nonVisualTypes = new Set(['ListModel', 'ListElement', 'Connections', 'Component', 'Action', 'ActionGroup', 'Shortcut', 'Timer'])
+  const windowTypes = new Set(['ApplicationWindow', 'Window'])
+  const inheritedProperties = nonVisualTypes.has(name)
+    ? commonProperties.filter(item => item.name === 'id')
+    : windowTypes.has(name)
+      ? commonProperties.filter(item => ['id', 'x', 'y', 'width', 'height', 'visible', 'opacity'].includes(item.name))
+      : commonProperties
+  const mergedProperties = [...inheritedProperties, ...(typeProperties[name] || [])]
   return {
     name,
     properties: [...new Map(mergedProperties.map(item => [item.name, item])).values()],

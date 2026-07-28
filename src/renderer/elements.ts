@@ -488,7 +488,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       return `<span style="font-size:16px;line-height:1">${checked}</span> ${escapeHTML(props.text || '')}`
     },
     getAttributes: (props) => withSignalAttrs(props, 'radio', {
-      'data-qml-group': props.Group || props.group || 'default',
+      'data-qml-group': props['ButtonGroup.group'] || props.Group || props.group || 'default',
       'data-qml-text': props.text || '',
       'data-qml-id': uid(),
     }),
@@ -1172,7 +1172,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       return headers + cells
     },
     getAttributes: (props) => withSignalAttrs(props, 'calendar', {
-      'data-qml-selectedday': props.selectedDay || '',
+      'data-qml-selectedday': props.selectedDate || props.selectedDay || '',
     }),
   },
 

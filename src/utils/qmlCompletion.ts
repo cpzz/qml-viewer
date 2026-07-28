@@ -127,11 +127,12 @@ function scanStructure(source: string, cursorOffset: number): QmlDocumentContext
 
 function snippetForProperty(item: QmlPropertyDefinition): string {
   if (item.kind === 'handler') return `${item.name}: {\n\t$0\n}`
-  if (item.kind === 'string') return `${item.name}: "\${1}"`
-  if (item.kind === 'color') return `${item.name}: `
-  if (item.kind === 'boolean') return `${item.name}: \${1|true,false|}`
+  if (item.kind === 'string' || item.kind === 'url') return `${item.name}: "\${1}"`
+  if (item.kind === 'color' || item.kind === 'boolean' || item.kind === 'enum' || item.kind === 'model' || item.kind === 'component') return `${item.name}: `
   if (item.kind === 'number') return `${item.name}: \${1:0}`
-  if (item.kind === 'enum' && item.values?.length) return `${item.name}: \${1:${item.values[0]}}`
+  if (item.kind === 'array') return `${item.name}: \${1:[]}`
+  if (item.kind === 'date') return `${item.name}: \${1:new Date()}`
+  if (item.kind === 'time') return `${item.name}: "\${1:12:00:00}"`
   return `${item.name}: \${1}`
 }
 
@@ -141,7 +142,7 @@ function wordRange(model: monaco.editor.ITextModel, position: monaco.Position): 
 }
 
 function propertyItems(properties: QmlPropertyDefinition[], range: monaco.Range): monaco.languages.CompletionItem[] {
-  return properties.map(item => ({
+  return properties.filter(item => !item.readOnly).map(item => ({
     label: item.name,
     kind: item.kind === 'handler' ? monaco.languages.CompletionItemKind.Event : monaco.languages.CompletionItemKind.Property,
     detail: item.detail || `QML ${item.kind} property`,
@@ -149,9 +150,9 @@ function propertyItems(properties: QmlPropertyDefinition[], range: monaco.Range)
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     range,
     sortText: `1-${item.name}`,
-    command: item.kind === 'color' ? {
+    command: ['color', 'boolean', 'enum', 'model', 'component'].includes(item.kind) ? {
       id: 'editor.action.triggerSuggest',
-      title: 'Show color values',
+      title: 'Show property values',
     } : undefined,
   }))
 }
@@ -177,6 +178,26 @@ function colorValueItems(range: monaco.Range): monaco.languages.CompletionItem[]
   }))
 }
 
+function literalItem(
+  label: string,
+  insertText: string,
+  detail: string,
+  range: monaco.Range,
+  kind = monaco.languages.CompletionItemKind.Value,
+): monaco.languages.CompletionItem {
+  return { label, kind, insertText, detail, range, sortText: `0-${label}` }
+}
+
+function referenceItems(values: string[], range: monaco.Range): monaco.languages.CompletionItem[] {
+  return values.map(value => literalItem(
+    value,
+    value,
+    'QML object reference',
+    range,
+    monaco.languages.CompletionItemKind.Variable,
+  ))
+}
+
 function memberItems(typeName: string, range: monaco.Range): monaco.languages.CompletionItem[] {
   const definition = qmlTypeMap.get(typeName)
   if (!definition) return []
@@ -184,7 +205,7 @@ function memberItems(typeName: string, range: monaco.Range): monaco.languages.Co
     label: item.name,
     kind: monaco.languages.CompletionItemKind.Property,
     insertText: item.name,
-    detail: `${typeName} property`,
+    detail: item.readOnly ? `${typeName} read-only property` : `${typeName} property`,
     range,
   }))
   const methods = (definition.methods || []).map(method => ({
@@ -399,10 +420,39 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
         const definition = context.currentType ? qmlTypeMap.get(context.currentType) : undefined
         const propertyDefinition = definition?.properties.find(item => item.name === propertyName)
         const suggestions: monaco.languages.CompletionItem[] = []
-        if (propertyDefinition?.kind === 'boolean') suggestions.push(...valueItems(['true', 'false'], range))
-        if (propertyDefinition?.values) suggestions.push(...valueItems(propertyDefinition.values, range))
+        if (propertyDefinition?.kind === 'string') suggestions.push(literalItem('empty string', '""', 'QML string value', range, monaco.languages.CompletionItemKind.Text))
+        if (propertyDefinition?.kind === 'url') suggestions.push(literalItem('empty URL', '""', 'QML URL value', range, monaco.languages.CompletionItemKind.File))
+        if (propertyDefinition?.kind === 'number') suggestions.push(literalItem('0', '0', 'QML numeric value', range, monaco.languages.CompletionItemKind.Value))
+        if (propertyDefinition?.kind === 'boolean') suggestions.push(
+          literalItem('true', 'true', 'QML boolean value', range, monaco.languages.CompletionItemKind.Keyword),
+          literalItem('false', 'false', 'QML boolean value', range, monaco.languages.CompletionItemKind.Keyword),
+        )
+        if (propertyDefinition?.kind === 'enum' && propertyDefinition.values) suggestions.push(...valueItems(propertyDefinition.values, range))
+        if (propertyDefinition?.kind === 'array') suggestions.push(literalItem('empty array', '[]', 'QML array value', range, monaco.languages.CompletionItemKind.Value))
+        if (propertyDefinition?.kind === 'model') {
+          suggestions.push(
+            literalItem('empty model', '[]', 'QML array model', range, monaco.languages.CompletionItemKind.Value),
+            literalItem('numeric model', '0', 'QML item-count model', range, monaco.languages.CompletionItemKind.Value),
+          )
+          suggestions.push(...referenceItems(
+            [...context.ids].filter(([, type]) => type === 'ListModel').map(([id]) => id),
+            range,
+          ))
+        }
+        if (propertyDefinition?.kind === 'component') {
+          suggestions.push(...referenceItems(
+            [...context.ids].filter(([, type]) => type === 'Component').map(([id]) => id),
+            range,
+          ))
+        }
+        if (propertyDefinition?.kind === 'date') suggestions.push(literalItem('new Date()', 'new Date()', 'QML date value', range, monaco.languages.CompletionItemKind.Constructor))
+        if (propertyDefinition?.kind === 'time') suggestions.push(literalItem('12:00:00', '"12:00:00"', 'QML time value', range, monaco.languages.CompletionItemKind.Value))
+        if (propertyDefinition?.kind === 'handler') suggestions.push({
+          ...literalItem('handler block', '{\n\t$0\n}', 'QML signal handler block', range, monaco.languages.CompletionItemKind.Snippet),
+          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+        })
         if (propertyName.startsWith('anchors.') || propertyName === 'target' || propertyName.endsWith('Component')) {
-          suggestions.push(...valueItems(['parent', ...context.ids.keys()], range))
+          suggestions.push(...referenceItems(['parent', ...context.ids.keys()], range))
         }
         if (propertyDefinition?.kind === 'color') {
           suggestions.push(...colorValueItems(range))
