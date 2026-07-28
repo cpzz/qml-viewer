@@ -1177,13 +1177,18 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
 
   ApplicationWindow: {
     tag: 'div',
-    computeStyles: (_props) => ({
-      'position': 'relative',
-      'overflow': 'hidden',
-      'border': '1px solid var(--qml-window-border)',
-      'background': 'var(--qml-window-bg)',
-      'box-shadow': '0 2px 8px var(--qml-window-shadow)',
-    }),
+    computeStyles: (props) => {
+      const bg = props.color && props.color !== 'transparent'
+        ? toCSSColor(props.color)
+        : 'var(--qml-window-bg)'
+      return {
+        'position': 'relative',
+        'overflow': 'hidden',
+        'border': '1px solid var(--qml-window-border)',
+        'background': bg,
+        'box-shadow': '0 2px 8px var(--qml-window-shadow)',
+      }
+    },
   },
 
   Window: {

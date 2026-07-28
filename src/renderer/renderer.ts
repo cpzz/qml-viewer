@@ -723,9 +723,6 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
   for (const node of previewRoots) {
     if (node.type === 'Window' || node.type === 'ApplicationWindow') {
       windowTitle = node.properties.title || 'QML Preview'
-      if (node.properties.color) {
-        bodyStyles['background'] = node.properties.color
-      }
     }
     rootHTML += renderNode(node, undefined, modelMap, componentMap)
   }
