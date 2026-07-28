@@ -450,7 +450,7 @@ export default function App() {
     } else {
       contentText = browserFileStoreRef.current.get(filePath) ?? null
     }
-    if (!contentText) return
+    if (contentText === null) return
     const tab: FileTab = {
       id: 'tab-' + (_tabId++),
       name: filePath.split(/[\\/]/).pop() || 'unknown.qml',
