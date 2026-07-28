@@ -33,7 +33,7 @@ Status legend:
 
 | # | Item | Example | Status | Notes |
 |---|---|---|---|---|
-| 13 | Basic controls render | Button, Switch, Slider, TextField, ComboBox | PASS | Main controls mapped with visual defaults. |
+| 13 | Basic controls render | Button, Switch, Slider, TextField, ComboBox | PASS | Includes editable ComboBox filtering/acceptance plus password/read-only/wrap behavior. |
 | 14 | Event handlers | `onClicked`, `onTriggered`, `onActivated` | PASS | Generic onXxx attribute routing added. |
 | 15 | Tab + stack sync | TabBar + StackLayout currentIndex | PASS | Initial and interactive index sync supported. |
 | 16 | Menu interactions | Menu / MenuItem | PARTIAL | Basic open/trigger path works; advanced keyboard/focus semantics missing. |
@@ -46,6 +46,7 @@ Status legend:
 | 18 | ListModel/ListElement binding | `model: peopleModel` | PASS | Delegate data mapping and refresh path present. |
 | 19 | Dynamic model API | `append/remove/setProperty/clear` | PARTIAL | Runtime API exists; covers common validation workflows. |
 | 20 | Loader lifecycle | `active`, `sourceComponent` inline/id | PASS | Active toggle destroy/restore + id component resolution supported. |
+| 20a | GridView / PathView delegate preview | numeric, array, ListModel models | PARTIAL | Delegate expansion plus PathLine/PathQuad/PathCubic geometry and swipe selection work; advanced PathAttribute/highlight behavior remains approximate. |
 
 ## 5) State and Animation Semantics
 
@@ -53,7 +54,7 @@ Status legend:
 |---|---|---|---|---|
 | 21 | states + PropertyChanges | `states: [State { ... }]` | PASS | PropertyChanges application supported. |
 | 22 | State.when auto state | `when: root.count > 0` | PASS | Re-evaluated in binding cycle. |
-| 23 | Transition base behavior | `Transition { NumberAnimation { ... } }` | PASS | duration/properties mapped to CSS transition. |
+| 23 | Transition base behavior | `Transition { NumberAnimation { ... } }` | PASS | Duration/properties/easing mapped to CSS transition; standalone target animations also run. |
 | 24 | Sequential/Parallel animation blocks | nested animation groups | PARTIAL | Duration/property aggregation implemented; full interpolation semantics not Qt-identical. |
 
 ## 6) Signals and Object Wiring
@@ -69,14 +70,15 @@ Status legend:
 |---|---|---|---|
 | 27 | SpinBox / DelayButton | PASS | SpinBox supports +/- and value update; DelayButton supports delayed triggered behavior. |
 | 28 | Dial / RangeSlider / Tumbler | PARTIAL | Visual + basic value semantics; advanced interaction semantics differ from Qt. |
-| 29 | SwipeView / StackView / SplitView | PARTIAL | Page switching via currentIndex works; full navigation stack API not implemented. |
+| 29 | SwipeView / StackView / SplitView | PARTIAL | StackView push/pop/replace/clear, depth/current item and transitions work for rendered child pages; dynamic URL component creation remains unsupported. |
 | 30 | Page / Pane / Frame / Drawer / Popup / ToolTip | PASS | Visualization-level rendering and basic structure support. |
-| 31 | TableView / TreeView / HeaderView | PARTIAL | Structural rendering available; full model/delegate virtualization not implemented. |
+| 31 | TableView / TreeView / HeaderView | PARTIAL | Selection APIs and large TableView windowing are supported; Qt model indexes and full delegate recycling remain approximate. |
 | 32 | MenuSeparator / Action / ActionGroup / Shortcut | PARTIAL | Render/placeholder support for validation; full action/shortcut dispatch not implemented. |
 | 33 | ScrollIndicator | PASS | Visual indicator rendering supported. |
-| 34 | Calendar / DatePicker / TimePicker | PARTIAL | Calendar/date/time visualization supported; full locale/calendar semantics not Qt-identical. |
+| 33a | ScrollBar | PARTIAL | Standalone and attached Flickable/ScrollView bars synchronize and drag; Qt overshoot/policy semantics remain approximate. |
+| 34 | Calendar / DatePicker / TimePicker | PARTIAL | Real month lengths, navigation, selection and Intl locale labels are supported; non-Gregorian Qt calendars remain unsupported. |
 | 35 | ShaderEffect / DropShadow / OpacityMask | PARTIAL | Validation-oriented visual approximation only. |
-| 36 | ChartView / WebEngineView / VideoOutput | PARTIAL | Placeholder/approximate rendering for visual validation; not feature-complete runtime engines. |
+| 36 | ChartView / WebEngineView / VideoOutput | PARTIAL | Common SVG chart series, native URL video, iframe navigation APIs; not Qt Multimedia/WebEngine backends. |
 
 ## Deferred (outside validation-first scope)
 
@@ -95,7 +97,7 @@ Use this order for quick confidence checks:
 5. Validate one menu trigger and one tab switch interaction
 6. Validate SpinBox +/- and DelayButton delayed trigger
 7. Validate SwipeView/StackView currentIndex and SplitView layout
-8. Validate DatePicker/TimePicker/WebEngineView placeholder rendering
+8. Validate Calendar navigation, ChartView SVG, VideoOutput media, and WebEngineView navigation
 
 ## File anchors
 

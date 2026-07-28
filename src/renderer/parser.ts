@@ -274,6 +274,7 @@ function parseRawValue(s: string, pos: number): [string, number] | null {
       else if (ch === ']') bracketDepth = Math.max(0, bracketDepth - 1)
       else if (ch === '(') parenDepth++
       else if (ch === ')') parenDepth = Math.max(0, parenDepth - 1)
+        else if (ch === ';' && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) break
       else if ((ch === '\n' || ch === '\r') && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) break
     }
 

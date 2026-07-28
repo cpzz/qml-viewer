@@ -109,9 +109,14 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
   TextInput: [property('text', 'string'), property('readOnly', 'boolean'), property('echoMode', 'enum', ['TextInput.Normal', 'TextInput.Password', 'TextInput.NoEcho', 'TextInput.PasswordEchoOnEdit']), property('onTextChanged', 'handler'), property('onAccepted', 'handler')],
   TextArea: [property('text', 'string'), property('placeholderText', 'string'), property('readOnly', 'boolean'), property('wrapMode', 'enum', ['TextEdit.NoWrap', 'TextEdit.WordWrap', 'TextEdit.WrapAnywhere']), property('onTextChanged', 'handler')],
   TextEdit: [property('text', 'string'), property('readOnly', 'boolean'), property('wrapMode', 'enum', ['TextEdit.NoWrap', 'TextEdit.WordWrap', 'TextEdit.WrapAnywhere']), property('onTextChanged', 'handler')],
-  ComboBox: [property('model', 'model'), property('currentIndex', 'number'), property('currentText', 'string', undefined, 'Read-only current display text', true), property('placeholderText', 'string'), property('editable', 'boolean'), property('onActivated', 'handler'), property('onCurrentIndexChanged', 'handler')],
+  ComboBox: [property('model', 'model'), property('textRole', 'string'), property('currentIndex', 'number'), property('currentText', 'string', undefined, 'Read-only current display text', true), property('editText', 'string'), property('placeholderText', 'string'), property('editable', 'boolean'), property('onAccepted', 'handler'), property('onActivated', 'handler'), property('onCurrentIndexChanged', 'handler')],
   ListView: [property('model', 'model'), property('delegate', 'component'), property('currentIndex', 'number'), property('spacing', 'number'), property('orientation', 'enum', ['ListView.Vertical', 'ListView.Horizontal']), property('onActivated', 'handler')],
   GridView: [property('model', 'model'), property('delegate', 'component'), property('currentIndex', 'number'), property('cellWidth', 'number'), property('cellHeight', 'number')],
+  PathView: [property('model', 'model'), property('delegate', 'component'), property('currentIndex', 'number'), property('pathItemCount', 'number'), property('path', 'component')],
+  Path: [property('startX', 'number'), property('startY', 'number')],
+  PathLine: [property('x', 'number'), property('y', 'number')],
+  PathQuad: [property('x', 'number'), property('y', 'number'), property('controlX', 'number'), property('controlY', 'number')],
+  PathCubic: [property('x', 'number'), property('y', 'number'), property('control1X', 'number'), property('control1Y', 'number'), property('control2X', 'number'), property('control2Y', 'number')],
   Repeater: [property('model', 'model'), property('delegate', 'component')],
   Loader: [property('active', 'boolean'), property('source', 'url'), property('sourceComponent', 'component'), property('onLoaded', 'handler')],
   Tumbler: [property('model', 'model'), property('currentIndex', 'number')],
@@ -135,11 +140,25 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
   Action: [property('text', 'string'), property('enabled', 'boolean'), property('checkable', 'boolean'), property('checked', 'boolean'), property('shortcut', 'string'), property('onTriggered', 'handler')],
   Timer: [property('interval', 'number'), property('running', 'boolean'), property('repeat', 'boolean'), property('triggeredOnStart', 'boolean'), property('onTriggered', 'handler')],
   Connections: [property('target', 'expression'), property('enabled', 'boolean')],
-  Calendar: [property('selectedDate', 'date'), property('onClicked', 'handler')],
+  Calendar: [property('selectedDate', 'date'), property('displayedMonth', 'date'), property('locale', 'string'), property('onClicked', 'handler')],
   DatePicker: [property('date', 'date'), property('value', 'date'), property('onValueChanged', 'handler')],
   TimePicker: [property('time', 'time'), property('value', 'time'), property('onValueChanged', 'handler')],
   WebEngineView: [property('url', 'url'), property('onLoadingChanged', 'handler')],
-  VideoOutput: [property('source', 'expression'), property('fillMode', 'enum', ['VideoOutput.Stretch', 'VideoOutput.PreserveAspectFit', 'VideoOutput.PreserveAspectCrop'])],
+  VideoOutput: [property('source', 'expression'), property('fillMode', 'enum', ['VideoOutput.Stretch', 'VideoOutput.PreserveAspectFit', 'VideoOutput.PreserveAspectCrop']), property('autoPlay', 'boolean'), property('muted', 'boolean'), property('controls', 'boolean')],
+  DropShadow: [property('source', 'expression'), property('radius', 'number'), property('samples', 'number'), property('color', 'color'), property('horizontalOffset', 'number'), property('verticalOffset', 'number')],
+  OpacityMask: [property('source', 'expression'), property('maskSource', 'expression'), property('opacity', 'number')],
+  ShaderEffect: [property('fragmentShader', 'url'), property('vertexShader', 'url'), property('opacity', 'number')],
+  ChartView: [property('title', 'string'), property('legend.visible', 'boolean'), property('antialiasing', 'boolean')],
+  LineSeries: [property('name', 'string'), property('color', 'color')],
+  SplineSeries: [property('name', 'string'), property('color', 'color')],
+  BarSeries: [property('name', 'string'), property('color', 'color')],
+  BarSet: [property('label', 'string'), property('values', 'array')],
+  PieSeries: [property('name', 'string')],
+  PieSlice: [property('label', 'string'), property('value', 'number'), property('color', 'color')],
+  XYPoint: [property('x', 'number'), property('y', 'number')],
+  NumberAnimation: [property('target', 'expression'), property('property', 'string'), property('from', 'number'), property('to', 'number'), property('duration', 'number'), property('running', 'boolean'), property('loops', 'number'), property('easing.type', 'enum', ['Easing.Linear', 'Easing.InQuad', 'Easing.OutQuad', 'Easing.InOutQuad', 'Easing.InCubic', 'Easing.OutCubic', 'Easing.InOutCubic'])],
+  ColorAnimation: [property('target', 'expression'), property('property', 'string'), property('from', 'color'), property('to', 'color'), property('duration', 'number'), property('running', 'boolean')],
+  PropertyAnimation: [property('target', 'expression'), property('property', 'string'), property('from', 'expression'), property('to', 'expression'), property('duration', 'number'), property('running', 'boolean')],
 }
 
 const supportedTypes = [
@@ -152,6 +171,9 @@ const supportedTypes = [
   'VerticalHeaderView', 'ItemDelegate', 'BusyIndicator', 'ScrollIndicator', 'ApplicationWindow', 'Window', 'Dialog',
   'MenuBar', 'Menu', 'MenuItem', 'MenuSeparator', 'Action', 'ActionGroup', 'Shortcut', 'Calendar', 'DatePicker',
   'TimePicker', 'ShaderEffect', 'DropShadow', 'OpacityMask', 'ChartView', 'WebEngineView', 'VideoOutput', 'Label', 'Timer',
+  'Path', 'PathLine', 'PathQuad', 'PathCubic',
+  'LineSeries', 'SplineSeries', 'BarSeries', 'BarSet', 'PieSeries', 'PieSlice', 'XYPoint',
+  'NumberAnimation', 'ColorAnimation', 'PropertyAnimation',
 ]
 
 const methodsByType: Record<string, string[]> = {
@@ -161,10 +183,14 @@ const methodsByType: Record<string, string[]> = {
   ListModel: ['append()', 'remove()', 'set()', 'setProperty()', 'get()', 'clear()'],
   StackView: ['push()', 'pop()', 'replace()', 'clear()'],
   Loader: ['setSource()'],
+  WebEngineView: ['reload()', 'stop()', 'goBack()', 'goForward()'],
+  NumberAnimation: ['start()', 'restart()', 'stop()'],
+  ColorAnimation: ['start()', 'restart()', 'stop()'],
+  PropertyAnimation: ['start()', 'restart()', 'stop()'],
 }
 
 export const qmlTypes: QmlTypeDefinition[] = supportedTypes.map(name => {
-  const nonVisualTypes = new Set(['ListModel', 'ListElement', 'Connections', 'Component', 'Action', 'ActionGroup', 'Shortcut', 'Timer'])
+  const nonVisualTypes = new Set(['ListModel', 'ListElement', 'Connections', 'Component', 'Action', 'ActionGroup', 'Shortcut', 'Timer', 'Path', 'PathLine', 'PathQuad', 'PathCubic', 'LineSeries', 'SplineSeries', 'BarSeries', 'BarSet', 'PieSeries', 'PieSlice', 'XYPoint', 'NumberAnimation', 'ColorAnimation', 'PropertyAnimation'])
   const windowTypes = new Set(['ApplicationWindow', 'Window'])
   const inheritedProperties = nonVisualTypes.has(name)
     ? commonProperties.filter(item => item.name === 'id')

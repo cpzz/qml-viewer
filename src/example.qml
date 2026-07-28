@@ -254,9 +254,17 @@ ApplicationWindow {
             TextArea { placeholderText: "Multi-line text area"; Layout.fillWidth: true; implicitHeight: 80 }
 
             // ---------- 下拉框 ----------
-            // 预期：初始显示 Select...；点击后可选择 Option 1、Option 2、Option 3。
+            // 预期：普通下拉框初始选中 Option 2；可编辑下拉框可输入过滤，输入 Gamma 后按 Enter 接受。
             Label { text: "Combo Box:"; font.bold: true }
-            ComboBox { model: ["Option 1", "Option 2", "Option 3"]; Layout.fillWidth: true }
+            ComboBox { model: ["Option 1", "Option 2", "Option 3"]; currentIndex: 1; Layout.fillWidth: true }
+            ComboBox {
+                id: editableCombo
+                model: ["Alpha", "Beta", "Gamma"]
+                editable: true
+                currentIndex: 0
+                placeholderText: "Type to filter"
+                Layout.fillWidth: true
+            }
 
             // ---------- 新增控件展示 ----------
             // 预期：SpinBox 显示 3 并可加减；DelayButton 长按约 1 秒填充；Dial 初始为 65%，可鼠标拖动修改。
@@ -276,6 +284,43 @@ ApplicationWindow {
                 Tumbler { model: ["A", "B", "C", "D"]; currentIndex: 2 }
             }
 
+            // 预期：P0、P1、P2 沿二次曲线排列，中间项高于两端；水平拖动可改变 currentIndex。
+            Label { text: "PathView geometry:"; font.bold: true }
+            PathView {
+                id: pathDemo
+                width: parent.width
+                height: 150
+                model: 3
+                currentIndex: 0
+                delegate: Rectangle {
+                    width: 44
+                    height: 28
+                    radius: 4
+                    color: "#5b8def"
+                    Label { anchors.centerIn: parent; text: "P" + index; color: "white" }
+                }
+                path: Path {
+                    startX: 40
+                    startY: 110
+                    PathQuad { x: 500; y: 110; controlX: 270; controlY: 10 }
+                }
+            }
+
+            // 预期：内容区可纵向滚动；右侧 attached ScrollBar 随滚动同步，并可拖动滑块。
+            Label { text: "Attached ScrollBar:"; font.bold: true }
+            Flickable {
+                width: parent.width
+                height: 100
+                contentHeight: 260
+                Rectangle {
+                    width: parent.width
+                    height: 260
+                    color: "#eef5ff"
+                    Label { anchors.centerIn: parent; text: "Scrollable 260px content" }
+                }
+                ScrollBar.vertical: ScrollBar { active: true }
+            }
+
             // 预期：SwipeView 仅显示居中的第 2 页，StackView 仅显示居中的第 1 页，文字不被裁剪；SplitView 左右并排。
             Label { text: "SwipeView / StackView / SplitView:"; font.bold: true }
             SwipeView {
@@ -287,11 +332,17 @@ ApplicationWindow {
                 Rectangle { color: "#f6ffed"; Label { anchors.centerIn: parent; text: "Swipe Page 3" } }
             }
             StackView {
+                id: stackDemo
                 width: parent.width
                 height: 70
                 currentIndex: 0
-                Rectangle { color: "#f9f0ff"; Label { anchors.centerIn: parent; text: "Stack Page 1" } }
-                Rectangle { color: "#fff1f0"; Label { anchors.centerIn: parent; text: "Stack Page 2" } }
+                Rectangle { id: stackPage1; color: "#f9f0ff"; Label { anchors.centerIn: parent; text: "Stack Page 1" } }
+                Rectangle { id: stackPage2; color: "#fff1f0"; Label { anchors.centerIn: parent; text: "Stack Page 2" } }
+            }
+            RowLayout {
+                Button { text: "Stack Pop"; onClicked: stackDemo.pop() }
+                Button { text: "Stack Push"; onClicked: stackDemo.push(1) }
+                Button { text: "Stack Replace"; onClicked: stackDemo.replace(0) }
             }
             SplitView {
                 width: parent.width
@@ -362,6 +413,10 @@ ApplicationWindow {
                 editable: true
                 selectionMode: ExtendedSelection
             }
+            RowLayout {
+                Button { text: "Select row 2"; onClicked: employeeTable.select(1, "Add") }
+                Button { text: "Clear table selection"; onClicked: employeeTable.clearSelection() }
+            }
             ListModel {
                 id: projectTreeModel
                 ListElement { nodeId: "workspace"; parentId: ""; name: "Workspace" }
@@ -383,6 +438,10 @@ ApplicationWindow {
                 expanded: true
                 selectionMode: ExtendedSelection
             }
+            RowLayout {
+                Button { text: "Select src"; onClicked: projectTree.select("src", "Add") }
+                Button { text: "Clear tree selection"; onClicked: projectTree.clearSelection() }
+            }
             Rectangle {
                 width: parent.width
                 height: 56
@@ -393,35 +452,83 @@ ApplicationWindow {
                 Label { anchors.centerIn: parent; text: "ScrollIndicator" }
             }
 
-            // 预期：Calendar 显示 7 列日期网格，点击日期后出现选中高亮；下方并排显示原生日期与时间输入框。
+            // 预期：显示 February 2024、29 天且 29 日高亮；左右箭头切换月份，星期标题按 locale 生成。
             Label { text: "Calendar / DatePicker / TimePicker:"; font.bold: true }
-            Calendar { width: parent.width; height: 140 }
+            Calendar {
+                width: parent.width
+                height: 220
+                selectedDate: "2024-02-29"
+                displayedMonth: "2024-02-01"
+                locale: "en-US"
+            }
             RowLayout {
                 DatePicker { }
                 TimePicker { }
             }
 
-            // 预期：三种 Effect 显示带对应 CSS 外观的彩色占位条；ChartView 和 VideoOutput 显示静态占位。
-            // WebEngineView 尝试加载 example.com；受站点 iframe/CSP 或网络限制时，空白/拒绝加载不算 QML 解析失败。
-            Label { text: "Effects / Media placeholders:"; font.bold: true }
+            // 预期：ShaderEffect 保留内容；DropShadow 使用蓝灰阴影；OpacityMask 应用透明度。
+            // ChartView 显示折线和柱形 SVG；VideoOutput 尝试播放远程 MP4；WebEngineView 加载能力受目标站点 CSP 限制。
+            Label { text: "Effects / Chart / Media:"; font.bold: true }
             ShaderEffect {
                 width: parent.width
                 height: 40
+                opacity: 0.9
                 Rectangle { anchors.fill: parent; color: "#e8f3ff"; Label { anchors.centerIn: parent; text: "ShaderEffect" } }
             }
             DropShadow {
                 width: parent.width
                 height: 40
+                radius: 10
+                horizontalOffset: 3
+                verticalOffset: 5
+                color: "steelblue"
                 Rectangle { anchors.fill: parent; color: "#fffbe6"; Label { anchors.centerIn: parent; text: "DropShadow" } }
             }
             OpacityMask {
                 width: parent.width
                 height: 40
+                opacity: 0.65
                 Rectangle { anchors.fill: parent; color: "#f6ffed"; Label { anchors.centerIn: parent; text: "OpacityMask" } }
             }
-            ChartView { width: parent.width; height: 110 }
+            ChartView {
+                width: parent.width
+                height: 180
+                LineSeries {
+                    color: "steelblue"
+                    XYPoint { x: 0; y: 1 }
+                    XYPoint { x: 1; y: 3 }
+                    XYPoint { x: 2; y: 2 }
+                    XYPoint { x: 3; y: 5 }
+                }
+                BarSeries {
+                    color: "#65a765"
+                    BarSet { label: "Values"; values: [2, 4, 3, 5] }
+                }
+            }
             WebEngineView { width: parent.width; height: 120; url: "https://example.com" }
-            VideoOutput { width: parent.width; height: 100 }
+            VideoOutput {
+                width: parent.width
+                height: 160
+                source: "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
+                fillMode: VideoOutput.PreserveAspectFit
+                muted: true
+                controls: true
+            }
+
+            // 预期：点击 Replay 后蓝色矩形在 2.2 秒内从 x=0 移动到 x=220；可反复点击重新播放。
+            Label { text: "Standalone animation:"; font.bold: true }
+            Rectangle { id: animatedBox; width: 52; height: 28; radius: 4; color: "#4f86e8" }
+            Button { text: "Replay animation"; onClicked: standaloneAnimation.restart() }
+            NumberAnimation {
+                id: standaloneAnimation
+                target: animatedBox
+                property: "x"
+                from: 0
+                to: 220
+                duration: 2200
+                easing.type: Easing.OutCubic
+                running: false
+            }
 
             // 预期：Action、ActionGroup、Shortcut 是非可视对象，预览中不应占据空间。
             Action { id: saveAction; text: "Save" }

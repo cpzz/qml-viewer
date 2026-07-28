@@ -9,6 +9,7 @@ interface PreviewPanelProps {
 interface PreviewFrame {
   html: string
   version: number
+  isLight: boolean
 }
 
 interface PreviewScroll {
@@ -20,19 +21,22 @@ interface PreviewScroll {
 
 export default function PreviewPanel({ code, isLight }: PreviewPanelProps) {
   const [frames, setFrames] = React.useState<PreviewFrame[]>([
-    { html: '', version: 0 },
-    { html: '', version: 0 },
+    { html: '', version: 0, isLight },
+    { html: '', version: 0, isLight },
   ])
   const [activeSlot, setActiveSlot] = React.useState(0)
   const [error, setError] = React.useState<string | null>(null)
   const iframeRefs = useRef<Array<HTMLIFrameElement | null>>([null, null])
   const activeSlotRef = useRef(activeSlot)
   const versionRef = useRef(0)
+  const previousThemeRef = useRef(isLight)
   const pendingRef = useRef<{ slot: number; version: number; scroll: PreviewScroll } | null>(null)
   activeSlotRef.current = activeSlot
 
   useEffect(() => {
     const version = ++versionRef.current
+    const themeChanged = previousThemeRef.current !== isLight
+    previousThemeRef.current = isLight
     const timer = window.setTimeout(() => {
       const currentSlot = activeSlotRef.current
       const nextSlot = currentSlot === 0 ? 1 : 0
@@ -50,14 +54,14 @@ export default function PreviewPanel({ code, isLight }: PreviewPanelProps) {
         const html = parseAndRender(code, isLight)
         pendingRef.current = { slot: nextSlot, version, scroll }
         setFrames((current) => current.map((frame, slot) => (
-          slot === nextSlot ? { html, version } : frame
+          slot === nextSlot ? { html, version, isLight } : frame
         )))
         setError(null)
       } catch (renderError: unknown) {
         const message = renderError instanceof Error ? renderError.message : String(renderError)
         setError(message)
       }
-    }, 120)
+    }, themeChanged ? 0 : 120)
 
     return () => window.clearTimeout(timer)
   }, [code, isLight])
@@ -89,6 +93,7 @@ export default function PreviewPanel({ code, isLight }: PreviewPanelProps) {
             key={`preview-${slot}-${frame.version}`}
             ref={(element) => { iframeRefs.current[slot] = element }}
             className={`preview-iframe preview-iframe-${slot === activeSlot ? 'active' : 'buffer'}`}
+            style={{ backgroundColor: frame.isLight ? '#ffffff' : '#1e1e1e' }}
             srcDoc={frame.html}
             title={slot === activeSlot ? 'preview' : 'preview buffer'}
             aria-hidden={slot !== activeSlot}

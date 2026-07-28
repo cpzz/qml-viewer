@@ -135,7 +135,7 @@ function looksLikeBindingExpression(raw?: string): boolean {
 function cloneNodeWithIndex(node: QMLNode, idx: number): QMLNode {
   const props: Record<string, string> = {}
   for (const [k, v] of Object.entries(node.properties)) {
-    props[k] = v.replace(/\$\{index\}/g, String(idx))
+    props[k] = replaceIdentifierOutsideStrings(v.replace(/\$\{index\}/g, String(idx)), 'index', String(idx))
   }
   props.__index = String(idx)
   return {
@@ -143,6 +143,43 @@ function cloneNodeWithIndex(node: QMLNode, idx: number): QMLNode {
     properties: props,
     children: node.children.map(c => cloneNodeWithIndex(c, idx)),
   }
+}
+
+function replaceIdentifierOutsideStrings(source: string, identifier: string, replacement: string): string {
+  let result = ''
+  let quote = ''
+  let escaped = false
+  for (let index = 0; index < source.length;) {
+    const character = source[index]
+    if (escaped) {
+      result += character
+      escaped = false
+      index++
+      continue
+    }
+    if (quote && character === '\\') {
+      result += character
+      escaped = true
+      index++
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quote = quote === character ? '' : quote || character
+      result += character
+      index++
+      continue
+    }
+    const before = index === 0 ? '' : source[index - 1]
+    const after = source[index + identifier.length] || ''
+    if (!quote && source.startsWith(identifier, index) && !/[\w$]/.test(before) && !/[\w$]/.test(after)) {
+      result += replacement
+      index += identifier.length
+      continue
+    }
+    result += character
+    index++
+  }
+  return result
 }
 
 function cloneNodeWithContext(node: QMLNode, idx: number, row?: ListModelRow): QMLNode {
@@ -162,6 +199,11 @@ function cloneNodeWithContext(node: QMLNode, idx: number, row?: ListModelRow): Q
         value = row[trimmed.slice(6)]
       } else if (row[trimmed] !== undefined) {
         value = row[trimmed]
+      } else {
+        value = replaceIdentifierOutsideStrings(value, 'index', String(idx))
+        for (const [role, roleVal] of Object.entries(row)) {
+          value = replaceIdentifierOutsideStrings(value, role, JSON.stringify(roleVal))
+        }
       }
     }
     props[k] = value
@@ -225,10 +267,10 @@ function collectComponents(nodes: QMLNode[]): ComponentMap {
 }
 
 /**
- * Expand ListView content: if blockProperties.delegate exists and model is numeric,
+ * Expand item-view content: if blockProperties.delegate exists and model is numeric,
  * generate repeated children.
  */
-function expandListView(node: QMLNode, modelMap: ListModelMap): QMLNode[] {
+function expandItemView(node: QMLNode, modelMap: ListModelMap): QMLNode[] {
   if (!node.blockProperties?.delegate) return node.children
 
   const delegate = node.blockProperties.delegate
@@ -242,6 +284,23 @@ function expandListView(node: QMLNode, modelMap: ListModelMap): QMLNode[] {
       items.push(cloneNodeWithIndex(delegate, i))
     }
     return items
+  }
+
+  if (modelVal && modelVal.startsWith('[') && modelVal.endsWith(']')) {
+    try {
+      const values = JSON.parse(modelVal)
+      if (Array.isArray(values)) {
+        return values.map((value, index) => {
+          const row = value && typeof value === 'object'
+            ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, String(item)]))
+            : { modelData: String(value) }
+          if (row.modelData === undefined) row.modelData = row.text ?? row.name ?? ''
+          return cloneNodeWithContext(delegate, index, row)
+        })
+      }
+    } catch {
+      // Keep explicit child content when an array expression cannot be evaluated statically.
+    }
   }
 
   if (modelVal && modelMap[modelVal]) {
@@ -301,8 +360,74 @@ function expandLoader(node: QMLNode, componentMap: ComponentMap): QMLNode[] {
   return [sourceComponent]
 }
 
+function samplePath(node: QMLNode): Array<[number, number]> {
+  const path = node.blockProperties?.path
+  if (!path || path.type !== 'Path') return []
+  let x = parseFloat(path.properties.startX || '0') || 0
+  let y = parseFloat(path.properties.startY || '0') || 0
+  const points: Array<[number, number]> = [[x, y]]
+  for (const segment of path.children) {
+    const endX = parseFloat(segment.properties.x || String(x)) || 0
+    const endY = parseFloat(segment.properties.y || String(y)) || 0
+    const startX = x
+    const startY = y
+    const steps = segment.type === 'PathLine' ? 1 : 16
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps
+      if (segment.type === 'PathQuad') {
+        const controlX = parseFloat(segment.properties.controlX || String(startX)) || 0
+        const controlY = parseFloat(segment.properties.controlY || String(startY)) || 0
+        points.push([(1 - t) ** 2 * startX + 2 * (1 - t) * t * controlX + t ** 2 * endX, (1 - t) ** 2 * startY + 2 * (1 - t) * t * controlY + t ** 2 * endY])
+      } else if (segment.type === 'PathCubic') {
+        const control1X = parseFloat(segment.properties.control1X || String(startX)) || 0
+        const control1Y = parseFloat(segment.properties.control1Y || String(startY)) || 0
+        const control2X = parseFloat(segment.properties.control2X || String(endX)) || 0
+        const control2Y = parseFloat(segment.properties.control2Y || String(endY)) || 0
+        points.push([(1 - t) ** 3 * startX + 3 * (1 - t) ** 2 * t * control1X + 3 * (1 - t) * t ** 2 * control2X + t ** 3 * endX, (1 - t) ** 3 * startY + 3 * (1 - t) ** 2 * t * control1Y + 3 * (1 - t) * t ** 2 * control2Y + t ** 3 * endY])
+      } else {
+        points.push([startX + (endX - startX) * t, startY + (endY - startY) * t])
+      }
+    }
+    x = endX
+    y = endY
+  }
+  return points
+}
+
+function renderChart(node: QMLNode): string {
+  const width = 320
+  const height = 160
+  const colors = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6']
+  let svg = `<svg viewBox="0 0 ${width} ${height}" width="100%" height="100%" role="img" aria-label="ChartView">`
+  svg += '<line x1="32" y1="12" x2="32" y2="136" stroke="currentColor" opacity=".35"/><line x1="32" y1="136" x2="310" y2="136" stroke="currentColor" opacity=".35"/>'
+  node.children.forEach((series, seriesIndex) => {
+    const color = series.properties.color || colors[seriesIndex % colors.length]
+    if (series.type === 'LineSeries' || series.type === 'SplineSeries') {
+      const points = series.children.filter(child => child.type === 'XYPoint').map(child => [parseFloat(child.properties.x || '0') || 0, parseFloat(child.properties.y || '0') || 0] as [number, number])
+      if (points.length) {
+        const maxX = Math.max(1, ...points.map(point => point[0]))
+        const maxY = Math.max(1, ...points.map(point => point[1]))
+        const path = points.map((point, index) => `${index ? 'L' : 'M'} ${32 + point[0] / maxX * 270} ${136 - point[1] / maxY * 116}`).join(' ')
+        svg += `<path d="${path}" fill="none" stroke="${escapeAttr(color)}" stroke-width="2"/>`
+      }
+    } else if (series.type === 'BarSeries') {
+      const values = series.children.filter(child => child.type === 'BarSet').flatMap(child => {
+        try { const parsed = JSON.parse(child.properties.values || '[]'); return Array.isArray(parsed) ? parsed.map(Number) : [] } catch { return [] }
+      })
+      const max = Math.max(1, ...values)
+      values.forEach((value, index) => { const barWidth = 250 / Math.max(1, values.length); const barHeight = value / max * 110; svg += `<rect x="${38 + index * barWidth}" y="${136 - barHeight}" width="${Math.max(3, barWidth - 4)}" height="${barHeight}" fill="${escapeAttr(color)}"/>` })
+    } else if (series.type === 'PieSeries') {
+      const slices = series.children.filter(child => child.type === 'PieSlice').map(child => Math.max(0, parseFloat(child.properties.value || '0') || 0))
+      const total = slices.reduce((sum, value) => sum + value, 0) || 1
+      let angle = -Math.PI / 2
+      slices.forEach((value, index) => { const next = angle + value / total * Math.PI * 2; const large = next - angle > Math.PI ? 1 : 0; const x1 = 170 + Math.cos(angle) * 58, y1 = 76 + Math.sin(angle) * 58, x2 = 170 + Math.cos(next) * 58, y2 = 76 + Math.sin(next) * 58; svg += `<path d="M170 76 L${x1} ${y1} A58 58 0 ${large} 1 ${x2} ${y2} Z" fill="${colors[index % colors.length]}"/>`; angle = next })
+    }
+  })
+  return svg + '</svg>'
+}
+
 function shouldSkipDirectRender(type: string): boolean {
-  return type === 'ListModel' || type === 'ListElement' || type === 'Connections' || type === 'Component'
+  return ['ListModel', 'ListElement', 'Connections', 'Component', 'Action', 'ActionGroup', 'Shortcut', 'Timer', 'Path', 'PathLine', 'PathQuad', 'PathCubic', 'LineSeries', 'SplineSeries', 'BarSeries', 'BarSet', 'PieSeries', 'PieSlice', 'XYPoint', 'NumberAnimation', 'ColorAnimation', 'PropertyAnimation'].includes(type)
 }
 
 function renderNode(node: QMLNode, parentType?: string, modelMap: ListModelMap = {}, componentMap: ComponentMap = {}): string {
@@ -413,7 +538,11 @@ function renderNode(node: QMLNode, parentType?: string, modelMap: ListModelMap =
   if (useFlowOffset) {
     runtimeAttrs.push('data-qml-flow-pos="true"')
   }
-  if ((node.type === 'ListView' || node.type === 'Repeater') && node.blockProperties?.delegate) {
+  if (node.type === 'PathView') {
+    const pathPoints = samplePath(node)
+    if (pathPoints.length > 1) runtimeAttrs.push(`data-qml-pathpoints="${escapeAttr(JSON.stringify(pathPoints))}"`)
+  }
+  if ((node.type === 'ListView' || node.type === 'GridView' || node.type === 'PathView' || node.type === 'Repeater') && node.blockProperties?.delegate) {
     const modelRef = (node.properties.model || '').trim()
     if (modelRef && !/^\d+$/.test(modelRef) && !(modelRef.startsWith('[') && modelRef.endsWith(']'))) {
       runtimeAttrs.push(`data-qml-model-ref="${escapeAttr(modelRef)}"`)
@@ -464,7 +593,9 @@ function renderNode(node: QMLNode, parentType?: string, modelMap: ListModelMap =
   }
 
   // Normal content rendering
-  if (mapping?.renderContent) {
+  if (node.type === 'ChartView') {
+    html += renderChart(node)
+  } else if (mapping?.renderContent) {
     html += mapping.renderContent(node.properties)
   } else if (node.properties.text) {
     // Fallback: show text for unknown element types (Label, Button, etc.)
@@ -474,23 +605,35 @@ function renderNode(node: QMLNode, parentType?: string, modelMap: ListModelMap =
   const isWindowRootType = node.type === 'Window' || node.type === 'ApplicationWindow'
   const headerNode = isWindowRootType ? node.blockProperties?.header : undefined
   const footerNode = isWindowRootType ? node.blockProperties?.footer : undefined
+  const attachedScrollBars = (node.type === 'Flickable' || node.type === 'ScrollView') && node.blockProperties
+    ? Object.entries(node.blockProperties)
+      .filter(([key, child]) => child.type === 'ScrollBar' && (key === 'ScrollBar.vertical' || key === 'ScrollBar.horizontal'))
+      .map(([key, child]) => ({
+        ...child,
+        properties: {
+          ...child.properties,
+          __attached: 'true',
+          orientation: key.endsWith('.horizontal') ? 'Qt.Horizontal' : 'Qt.Vertical',
+        },
+      }))
+    : []
 
   // Render children
-  if (node.children.length > 0 || (node.type === 'ListView' && node.blockProperties?.delegate) || (node.type === 'Repeater' && node.blockProperties?.delegate) || (node.type === 'Loader' && (node.blockProperties?.sourceComponent || node.properties.sourceComponent)) || headerNode || footerNode) {
+  if (node.children.length > 0 || attachedScrollBars.length > 0 || (['ListView', 'GridView', 'PathView'].includes(node.type) && node.blockProperties?.delegate) || (node.type === 'Repeater' && node.blockProperties?.delegate) || (node.type === 'Loader' && (node.blockProperties?.sourceComponent || node.properties.sourceComponent)) || headerNode || footerNode) {
     // Determine if parent is a layout type — needed by children for auto-stretch
     const layoutParent = (
       node.type === 'ColumnLayout' || node.type === 'Column' ||
       node.type === 'RowLayout' || node.type === 'Row'
     ) ? node.type : undefined
 
-    // For ListView, expand delegate+model into children
-    const effectiveChildren = node.type === 'ListView'
-      ? expandListView(node, modelMap)
+    // Expand item-view delegate/model pairs into preview children.
+    const effectiveChildren = node.type === 'ListView' || node.type === 'GridView' || node.type === 'PathView'
+      ? expandItemView(node, modelMap)
       : node.type === 'Repeater'
         ? expandRepeater(node, modelMap)
         : node.type === 'Loader'
           ? expandLoader(node, componentMap)
-          : node.children
+          : [...node.children, ...attachedScrollBars]
 
     if (headerNode || footerNode) {
       const headerHeight = headerNode ? 32 : 0
@@ -721,8 +864,14 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
   .qml-table-header:focus-visible { outline:2px solid var(--qml-accent); outline-offset:-2px; z-index:3; }
   .qml-table-header[data-qml-sorted="true"] { background:var(--qml-table-header-active) !important; }
   .qml-table-resizer:hover { background:var(--qml-accent); }
-  [data-qml-type="checkbox"]:hover span:first-child { color:var(--qml-accent); }
-  [data-qml-type="radio"]:hover span:first-child { color:var(--qml-accent); }
+  .qml-cb-marker,.qml-radio-marker { display:inline-flex;flex:0 0 16px;width:16px;height:16px;box-sizing:border-box;border:1px solid var(--qml-control-border);background:var(--qml-control-bg);align-items:center;justify-content:center; }
+  .qml-cb-marker { border-radius:3px; }
+  [data-qml-type="checkbox"][data-qml-checked="true"] .qml-cb-marker { border-color:var(--qml-accent);background:var(--qml-accent); }
+  [data-qml-type="checkbox"][data-qml-checked="true"] .qml-cb-marker::after { content:"";width:7px;height:4px;border-left:2px solid white;border-bottom:2px solid white;transform:translateY(-1px) rotate(-45deg); }
+  .qml-radio-marker { border-radius:50%; }
+  [data-qml-type="radio"][data-qml-checked="true"] .qml-radio-marker { border-color:var(--qml-accent); }
+  [data-qml-type="radio"][data-qml-checked="true"] .qml-radio-marker::after { content:"";width:8px;height:8px;border-radius:50%;background:var(--qml-accent); }
+  [data-qml-type="checkbox"]:hover .qml-cb-marker,[data-qml-type="radio"]:hover .qml-radio-marker { border-color:var(--qml-accent); }
 </style>
 </head>
 <body>
@@ -757,7 +906,7 @@ if(stageEl){
   }
 }
 var S={};
-var Runtime={ids:{},methods:{},connections:[],stateDefs:{},bindings:[],modelDefs:{},modelViews:{},domTextBindings:[],booting:true,applying:false};
+var Runtime={ids:{},methods:{},connections:[],stateDefs:{},bindings:[],modelDefs:{},modelViews:{},domTextBindings:[],animations:[],booting:true,applying:false};
 var Qt={
   AlignLeft:1,AlignRight:2,AlignHCenter:4,AlignTop:8,AlignBottom:16,AlignVCenter:32,AlignCenter:36,
   Checked:true,Unchecked:false,
@@ -895,8 +1044,6 @@ function setDomProp(id, prop, value){
       var on=!!value;
       if(el.getAttribute('data-qml-type')==='checkbox'){
         el.setAttribute('data-qml-checked',String(on));
-        var marker=el.querySelector('.qml-cb-marker');
-        if(marker)marker.textContent=on?'✓':'☐';
       }else if(el.getAttribute('data-qml-type')==='switch'){
         el.setAttribute('data-qml-checked',String(on));
         var track=el.firstElementChild;
@@ -972,6 +1119,7 @@ function setDomProp(id, prop, value){
     case 'color': el.style.background=String(value); break;
     case 'visible': el.style.display=value===false||value==='false'?'none':''; break;
     case 'opacity': el.style.opacity=String(value); break;
+    case 'url': if(el.getAttribute('data-qml-type')==='webengineview')el.setAttribute('src',String(value||'about:blank')); break;
     case 'active':
       if(el.getAttribute('data-qml-loader')==='true'){
         var on=!(value===false||value==='false'||value===0||value==='0');
@@ -1029,9 +1177,11 @@ function parseTransition(transRaw){
   var parseAnim=function(body){
     var d=(body.match(/duration\s*:\s*(\d+)/)||[])[1];
     var p=(body.match(/properties\s*:\s*["']([^"']+)["']/)||body.match(/property\s*:\s*["']([^"']+)["']/)||[])[1];
+    var easing=(body.match(/easing\.type\s*:\s*Easing\.([A-Za-z]+)/)||[])[1]||'InOutQuad';
     return {
       duration:d?parseInt(d,10):200,
       properties:p?String(p).split(',').map(function(x){return x.trim();}).filter(Boolean):['all'],
+      easing:easing,
     };
   };
 
@@ -1059,11 +1209,47 @@ function parseTransition(transRaw){
     return {
       duration:d0?parseInt(d0,10):200,
       properties:p0?String(p0).split(',').map(function(x){return x.trim();}).filter(Boolean):['all'],
+      easing:(raw.match(/easing\.type\s*:\s*Easing\.([A-Za-z]+)/)||[])[1]||'InOutQuad',
     };
   }
 
   var uniqProps=Array.from(new Set(mergedProps.filter(Boolean)));
-  return {duration:totalDuration||200,properties:uniqProps.length?uniqProps:['all']};
+  var easingMatch=(raw.match(/easing\.type\s*:\s*Easing\.([A-Za-z]+)/)||[])[1]||'InOutQuad';
+  return {duration:totalDuration||200,properties:uniqProps.length?uniqProps:['all'],easing:easingMatch};
+}
+
+function cssEasing(name){var map={Linear:'linear',InQuad:'ease-in',OutQuad:'ease-out',InOutQuad:'ease-in-out',InCubic:'cubic-bezier(.55,.055,.675,.19)',OutCubic:'cubic-bezier(.215,.61,.355,1)',InOutCubic:'cubic-bezier(.645,.045,.355,1)'};return map[name]||'ease-in-out';}
+
+function stopStandaloneAnimation(animation){
+  (animation.timers||[]).forEach(function(timer){clearTimeout(timer);});animation.timers=[];
+  var element=document.getElementById(animation.target);if(element)element.style.transition='none';
+  animation.active=false;
+  if(animation.id&&Runtime.ids[animation.id])Runtime.ids[animation.id].running=false;
+}
+
+function startStandaloneAnimation(animation){
+  if(!animation.target||!animation.property)return;
+  stopStandaloneAnimation(animation);
+  var target=Runtime.ids[animation.target];var element=document.getElementById(animation.target);if(!target||!element)return;
+  animation.active=true;if(animation.id&&Runtime.ids[animation.id])Runtime.ids[animation.id].running=true;
+  var runCycle=function(){
+    element.style.transition='none';
+    if(animation.from!==undefined)target[animation.property]=coerceLiteral(animation.from);
+    void element.offsetWidth;
+    requestAnimationFrame(function(){
+      if(!animation.active)return;
+      element.style.transition='all '+animation.duration+'ms '+cssEasing(animation.easing);
+      target[animation.property]=coerceLiteral(animation.to);
+    });
+  };
+  runCycle();
+  if(animation.loops<0){
+    var repeat=function(){if(!animation.active)return;runCycle();animation.timers.push(setTimeout(repeat,Math.max(16,animation.duration)));};
+    animation.timers.push(setTimeout(repeat,Math.max(16,animation.duration)));
+  }else{
+    for(var loop=1;loop<animation.loops;loop++)animation.timers.push(setTimeout(runCycle,animation.duration*loop));
+    animation.timers.push(setTimeout(function(){animation.active=false;if(animation.id&&Runtime.ids[animation.id])Runtime.ids[animation.id].running=false;},animation.duration*Math.max(1,animation.loops)));
+  }
 }
 
 function applyState(ownerId, stateName){
@@ -1087,7 +1273,7 @@ function applyState(ownerId, stateName){
         }).filter(Boolean);
         tProps=Array.from(new Set(mapped)).join(',')||'all';
       }
-      targetEl.style.transition=tProps+' '+def.transition.duration+'ms ease';
+      targetEl.style.transition=tProps+' '+def.transition.duration+'ms '+cssEasing(def.transition.easing);
     }
     Object.keys(change.props).forEach(function(prop){
       var v=evalExpr(change.props[prop], Runtime.ids[change.target]);
@@ -1201,18 +1387,24 @@ function refreshTableView(view,rows){
   var sortColumn=parseInt(view.getAttribute('data-qml-sort-column')||'-1',10);
   var sortDirection=view.getAttribute('data-qml-sort')||'';
   var selected=(view.getAttribute('data-qml-selected')||'').split(',').filter(Boolean).map(Number);
+  var virtual=rows.length>200;
+  var start=virtual?Math.max(0,Math.min(rows.length-1,parseInt(view.getAttribute('data-qml-window-start')||'0',10)||0)):0;
+  var visibleRows=virtual?rows.slice(start,start+120):rows;
   var html='<div class="qml-table-grid" role="grid" style="display:grid;grid-template-columns:'+gridColumns+';min-width:100%;width:max-content;border-top:1px solid var(--qml-control-border);border-left:1px solid var(--qml-control-border)">';
   headers.forEach(function(header,index){
     var sorted=index===sortColumn;
     var sortIndicator=sorted?'<span class="qml-table-sort" aria-hidden="true" style="margin-left:auto;padding-left:8px;font-size:10px">'+(sortDirection==='desc'?'▼':'▲')+'</span>':'';
     html+='<button type="button" class="qml-table-header" data-qml-column="'+index+'" data-qml-sorted="'+String(sorted)+'" aria-sort="'+(sorted?(sortDirection==='desc'?'descending':'ascending'):'none')+'" style="position:sticky;top:0;display:flex;align-items:center;min-height:30px;padding:6px 9px;text-align:left;font:inherit;font-weight:600;color:var(--qml-control-text);background:var(--qml-table-header-bg);border:0;border-right:1px solid var(--qml-table-header-border);border-bottom:2px solid var(--qml-table-header-border);box-shadow:inset 0 1px 0 rgba(255,255,255,.35);cursor:pointer;z-index:1"><span>'+escHtml(String(header))+'</span>'+sortIndicator+(resizable?'<span class="qml-table-resizer" aria-hidden="true" style="position:absolute;top:0;right:-4px;width:8px;height:100%;cursor:col-resize;z-index:2"></span>':'')+'</button>';
   });
-  rows.forEach(function(row,rowIndex){
+  if(virtual&&start>0)html+='<div aria-hidden="true" style="grid-column:1/-1;height:'+(start*30)+'px"></div>';
+  visibleRows.forEach(function(row,visibleIndex){
+    var rowIndex=start+visibleIndex;
     columns.forEach(function(role,columnIndex){
       var active=selected.indexOf(rowIndex)>=0;
       html+='<div role="gridcell" tabindex="0" class="qml-table-cell" data-qml-row="'+rowIndex+'" data-qml-column="'+columnIndex+'" data-qml-role="'+escHtml(String(role))+'" style="padding:6px 8px;border-right:1px solid var(--qml-control-border);border-bottom:1px solid var(--qml-control-border);background:'+(active?'var(--qml-combo-dd-sel-bg)':'transparent')+';cursor:default">'+escHtml(String(row[role]===undefined?'':row[role]))+'</div>';
     });
   });
+  if(virtual&&start+visibleRows.length<rows.length)html+='<div aria-hidden="true" style="grid-column:1/-1;height:'+((rows.length-start-visibleRows.length)*30)+'px"></div>';
   view.innerHTML=html+'</div>';
 }
 
@@ -1311,6 +1503,20 @@ function registerModelApi(modelId, rows, proxy){
   };
 }
 
+function stackViewNavigate(id,index,direction){
+  var stack=document.getElementById(id);if(!stack)return -1;
+  var pages=Array.prototype.filter.call(stack.children,function(child){return child.classList.contains('qml-node');});
+  if(!pages.length)return -1;
+  index=Math.max(0,Math.min(pages.length-1,index));
+  var previous=parseInt(stack.getAttribute('data-qml-currentindex')||'0',10);if(isNaN(previous))previous=0;
+  pages.forEach(function(page,pageIndex){
+    if(pageIndex===index){page.style.display='';if(page.animate)page.animate([{transform:'translateX('+(direction<0?'-18px':'18px')+')',opacity:.25},{transform:'translateX(0)',opacity:1}],{duration:180,easing:'ease-out'});}
+    else{page.style.display='none';}
+  });
+  stack.setAttribute('data-qml-currentindex',String(index));
+  return index;
+}
+
 function registerNode(node){
   if(!node||typeof node!=='object')return;
 
@@ -1354,6 +1560,39 @@ function registerNode(node){
       proxy.accept=function(){proxy.close();emitSignal(node.id,'accepted',null);};
       proxy.reject=function(){proxy.close();emitSignal(node.id,'rejected',null);};
     }
+    if(node.type==='StackView'){
+      proxy.depth=Math.max(1,node.children.length);
+      proxy.currentIndex=parseInt(node.properties.currentIndex||'0',10)||0;
+      proxy.push=function(item){
+        var stack=document.getElementById(node.id);var pages=stack?Array.prototype.filter.call(stack.children,function(child){return child.classList.contains('qml-node');}):[];
+        var next=typeof item==='number'?item:pages.findIndex(function(page){return page.id===item||page.id===(item&&item.id);});
+        if(next<0)next=Math.min(pages.length-1,(proxy.currentIndex||0)+1);
+        next=stackViewNavigate(node.id,next,1);if(next>=0){proxy.currentIndex=next;proxy.depth=Math.max(proxy.depth,next+1);proxy.currentItem=pages[next]||null;}return proxy.currentItem;
+      };
+      proxy.pop=function(){var next=stackViewNavigate(node.id,Math.max(0,(proxy.currentIndex||0)-1),-1);if(next>=0){proxy.currentIndex=next;proxy.depth=Math.max(1,proxy.depth-1);}return proxy.currentItem;};
+      proxy.replace=function(item){var previousDepth=proxy.depth;var result=proxy.push(item);proxy.depth=previousDepth;return result;};
+      proxy.clear=function(){var stack=document.getElementById(node.id);if(stack)Array.prototype.forEach.call(stack.children,function(page){page.style.display='none';});proxy.depth=0;proxy.currentIndex=-1;proxy.currentItem=null;};
+    }
+    if(node.type==='TableView'||node.type==='TreeView'){
+      proxy.selectedIndexes=[];
+      proxy.clearSelection=function(){var view=document.getElementById(node.id);if(!view)return;view.setAttribute('data-qml-selected','');proxy.selectedIndexes=[];var rows=rowsForStructuredView(view);if(node.type==='TableView')refreshTableView(view,rows);else refreshTreeView(view,rows);};
+      proxy.isSelected=function(index){return proxy.selectedIndexes.indexOf(index)>=0;};
+      proxy.select=function(index,mode){
+        var view=document.getElementById(node.id);if(!view)return;
+        var value=String(index);var selected=(view.getAttribute('data-qml-selected')||'').split(',').filter(Boolean);
+        if(mode==='Toggle')selected=selected.indexOf(value)>=0?selected.filter(function(item){return item!==value;}):selected.concat(value);
+        else if(mode==='Add')selected=selected.indexOf(value)>=0?selected:selected.concat(value);
+        else selected=[value];
+        view.setAttribute('data-qml-selected',selected.join(','));proxy.selectedIndexes=selected.map(function(item){var number=Number(item);return isNaN(number)?item:number;});
+        var rows=rowsForStructuredView(view);if(node.type==='TableView')refreshTableView(view,rows);else refreshTreeView(view,rows);
+      };
+    }
+    if(node.type==='WebEngineView'){
+      proxy.reload=function(){var frame=document.getElementById(node.id);if(frame)frame.setAttribute('src',frame.getAttribute('src')||'about:blank');};
+      proxy.stop=function(){var frame=document.getElementById(node.id);try{frame&&frame.contentWindow&&frame.contentWindow.stop();}catch(_e){}};
+      proxy.goBack=function(){var frame=document.getElementById(node.id);try{frame&&frame.contentWindow&&frame.contentWindow.history.back();}catch(_e){}};
+      proxy.goForward=function(){var frame=document.getElementById(node.id);try{frame&&frame.contentWindow&&frame.contentWindow.history.forward();}catch(_e){}};
+    }
     if(node.properties&&node.properties.states){
       Runtime.stateDefs[node.id]={
         states:parseStates(node.properties.states),
@@ -1395,6 +1634,16 @@ function registerNode(node){
           Runtime.connections.push({target:target,signal:signal,code:body});
         });
       }
+    }
+  }
+
+  if(['NumberAnimation','ColorAnimation','PropertyAnimation'].indexOf(node.type)>=0&&node.properties){
+    var animation={id:node.id||'',target:(node.properties.target||'').trim(),property:(node.properties.property||node.properties.properties||'').replace(/["']/g,'').trim(),from:node.properties.from,to:node.properties.to,duration:parseInt(node.properties.duration||'250',10)||250,easing:(node.properties['easing.type']||'Easing.InOutQuad').replace('Easing.',''),loops:node.properties.loops==='Animation.Infinite'?-1:(parseInt(node.properties.loops||'1',10)||1),running:node.properties.running!=='false',active:false,timers:[]};
+    Runtime.animations.push(animation);
+    if(node.id&&Runtime.ids[node.id]){
+      Runtime.ids[node.id].start=function(){startStandaloneAnimation(animation);};
+      Runtime.ids[node.id].restart=function(){startStandaloneAnimation(animation);};
+      Runtime.ids[node.id].stop=function(){stopStandaloneAnimation(animation);};
     }
   }
 
@@ -1471,8 +1720,77 @@ function stepTumbler(t,delta,eventObj){
   runElementHandler(t,'currentindexchanged',eventObj||null);
 }
 
+function renderCalendar(calendar,monthDelta){
+  var selectedRaw=calendar.getAttribute('data-qml-selecteddate')||'';
+  var monthRaw=calendar.getAttribute('data-qml-displayedmonth')||selectedRaw;
+  var base=monthRaw?new Date(monthRaw):new Date();
+  if(isNaN(base.getTime()))base=new Date();
+  base=new Date(base.getFullYear(),base.getMonth()+(monthDelta||0),1);
+  var year=base.getFullYear(),month=base.getMonth();
+  var pad=function(n){return String(n).padStart(2,'0');};
+  calendar.setAttribute('data-qml-displayedmonth',year+'-'+pad(month+1)+'-01');
+  var locale=calendar.getAttribute('data-qml-locale')||undefined;
+  var title=new Intl.DateTimeFormat(locale,{year:'numeric',month:'long'}).format(base);
+  var html='<div style="grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;margin-bottom:4px"><button type="button" class="qml-calendar-prev" aria-label="Previous month">‹</button><strong>'+escHtml(title)+'</strong><button type="button" class="qml-calendar-next" aria-label="Next month">›</button></div>';
+  var monday=new Date(2024,0,1);
+  for(var w=0;w<7;w++){var wd=new Date(monday);wd.setDate(monday.getDate()+w);html+='<span style="font-weight:600;text-align:center">'+escHtml(new Intl.DateTimeFormat(locale,{weekday:'short'}).format(wd))+'</span>';}
+  var offset=(base.getDay()+6)%7;
+  var days=new Date(year,month+1,0).getDate();
+  for(var empty=0;empty<offset;empty++)html+='<span></span>';
+  var today=new Date();
+  for(var day=1;day<=days;day++){
+    var iso=year+'-'+pad(month+1)+'-'+pad(day);
+    var selected=selectedRaw.slice(0,10)===iso;
+    var isToday=today.getFullYear()===year&&today.getMonth()===month&&today.getDate()===day;
+    html+='<button type="button" class="qml-calendar-day" data-qml-date="'+iso+'" style="border:'+(isToday?'1px solid var(--qml-accent)':'1px solid transparent')+';background:'+(selected?'var(--qml-accent)':'transparent')+';color:'+(selected?'white':'inherit')+';font-weight:'+(selected?'600':'400')+';padding:3px 0;cursor:pointer;border-radius:3px">'+day+'</button>';
+  }
+  calendar.innerHTML=html;
+}
+
+document.querySelectorAll('[data-qml-type="calendar"]').forEach(function(calendar){renderCalendar(calendar,0);});
+
+function layoutPathView(view){
+  var points=parseJsonAttr(view,'data-qml-pathpoints',[]);if(points.length<2)return;
+  var items=Array.prototype.filter.call(view.children,function(child){return child.classList.contains('qml-node');});
+  items.forEach(function(item,index){
+    var pointIndex=items.length<=1?0:Math.round(index*(points.length-1)/(items.length-1));var point=points[pointIndex]||[0,0];
+    item.style.position='absolute';item.style.left=point[0]+'px';item.style.top=point[1]+'px';item.style.transform='translate(-50%,-50%)';item.style.transition='transform 180ms ease,opacity 180ms ease';
+    item.setAttribute('data-qml-path-index',String(index));
+  });
+}
+document.querySelectorAll('[data-qml-type="pathview"]').forEach(layoutPathView);
+
+function scrollHostFor(bar){return bar.parentElement;}
+function syncAttachedScrollBar(bar){
+  if(bar.getAttribute('data-qml-attached')!=='true')return;
+  var host=scrollHostFor(bar);if(!host)return;
+  var horizontal=bar.getAttribute('data-qml-orientation')==='Qt.Horizontal';
+  var viewport=horizontal?host.clientWidth:host.clientHeight;
+  var extent=horizontal?host.scrollWidth:host.scrollHeight;
+  var offset=horizontal?host.scrollLeft:host.scrollTop;
+  var size=extent>0?Math.max(.05,Math.min(1,viewport/extent)):1;
+  var position=extent>viewport?offset/extent:0;
+  var thumb=bar.firstElementChild;if(!thumb)return;
+  if(horizontal){thumb.style.left=(position*100)+'%';thumb.style.width=(size*100)+'%';}
+  else{thumb.style.top=(position*100)+'%';thumb.style.height=(size*100)+'%';}
+  bar.style.opacity=extent>viewport?'1':'.25';
+}
+document.querySelectorAll('[data-qml-type="scrollbar"][data-qml-attached="true"]').forEach(function(bar){
+  var host=scrollHostFor(bar);if(!host)return;
+  host.addEventListener('scroll',function(){syncAttachedScrollBar(bar);},{passive:true});
+  syncAttachedScrollBar(bar);
+});
+
 var activeDrag=null;
 document.addEventListener('pointerdown',function(e){
+  var pathView=e.target.closest('[data-qml-type="pathview"]');
+  if(pathView){activeDrag={type:'pathview',el:pathView,startX:e.clientX,startIndex:parseInt(pathView.getAttribute('data-qml-currentindex')||'0',10)||0};return;}
+  var scrollBar=e.target.closest('[data-qml-type="scrollbar"]');
+  if(scrollBar&&scrollBar.getAttribute('data-qml-attached')==='true'){
+    var host=scrollHostFor(scrollBar);var horizontal=scrollBar.getAttribute('data-qml-orientation')==='Qt.Horizontal';
+    if(host){activeDrag={type:'scrollbar',el:scrollBar,host:host,horizontal:horizontal,start:horizontal?e.clientX:e.clientY,startScroll:horizontal?host.scrollLeft:host.scrollTop};e.preventDefault();}
+    return;
+  }
   var resizer=e.target.closest('.qml-table-resizer');
   if(resizer){
     var table=resizer.closest('.qml-tableview');
@@ -1505,8 +1823,24 @@ document.addEventListener('pointermove',function(e){
   }
   if(activeDrag.type==='range')updateRangeSlider(activeDrag.el,e.clientX,activeDrag.which);
   if(activeDrag.type==='dial')updateDial(activeDrag.el,e.clientX,e.clientY);
+  if(activeDrag.type==='scrollbar'){
+    var coordinate=activeDrag.horizontal?e.clientX:e.clientY;
+    var track=activeDrag.horizontal?activeDrag.el.clientWidth:activeDrag.el.clientHeight;
+    var viewport=activeDrag.horizontal?activeDrag.host.clientWidth:activeDrag.host.clientHeight;
+    var extent=activeDrag.horizontal?activeDrag.host.scrollWidth:activeDrag.host.scrollHeight;
+    var next=activeDrag.startScroll+(coordinate-activeDrag.start)*Math.max(1,extent/Math.max(1,track));
+    if(activeDrag.horizontal)activeDrag.host.scrollLeft=next;else activeDrag.host.scrollTop=next;
+  }
 });
-document.addEventListener('pointerup',function(){activeDrag=null;});
+document.addEventListener('pointerup',function(e){
+  if(activeDrag&&activeDrag.type==='pathview'){
+    var items=Array.prototype.filter.call(activeDrag.el.children,function(child){return child.classList.contains('qml-node');});
+    var delta=e.clientX-activeDrag.startX;var next=Math.max(0,Math.min(items.length-1,activeDrag.startIndex+(Math.abs(delta)>24?(delta<0?1:-1):0)));
+    activeDrag.el.setAttribute('data-qml-currentindex',String(next));if(activeDrag.el.id&&Runtime.ids[activeDrag.el.id])Runtime.ids[activeDrag.el.id].currentIndex=next;
+    items.forEach(function(item,index){item.style.opacity=index===next?'1':'.65';item.style.transform='translate(-50%,-50%) scale('+(index===next?'1.08':'1')+')';});
+  }
+  activeDrag=null;
+});
 document.addEventListener('wheel',function(e){
   var tumbler=e.target.closest('[data-qml-type="tumbler"]');
   if(!tumbler)return;
@@ -1516,6 +1850,10 @@ document.addEventListener('wheel',function(e){
 
 (QML_AST||[]).forEach(registerNode);
 Runtime.booting=false;
+document.querySelectorAll('[data-qml-type="webengineview"]').forEach(function(frame){frame.addEventListener('load',function(event){runElementHandler(frame,'loadingchanged',event);});});
+Runtime.animations.forEach(function(animation){
+  if(animation.running)startStandaloneAnimation(animation);
+});
 Object.keys(Runtime.modelDefs).forEach(function(mid){refreshModelViews(mid);});
 Runtime.domTextBindings=Array.prototype.map.call(document.querySelectorAll('[data-qml-bind-text]'),function(el){
   return {el:el,expr:el.getAttribute('data-qml-bind-text')||''};
@@ -1547,19 +1885,18 @@ document.addEventListener('click',function(e){
     case'checkbox':{
       var checked=t.getAttribute('data-qml-checked')!=='true';
       t.setAttribute('data-qml-checked',String(checked));
-      var marker=t.querySelector('.qml-cb-marker');
-      if(marker)marker.textContent=checked?'✓':'☐';
       if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].checked=checked;
       runElementHandler(t,'clicked',e);
       break;
     }
     case'radio':{
       var grp=t.getAttribute('data-qml-group')||'default';
-      var txt=t.getAttribute('data-qml-text')||'';
       document.querySelectorAll('[data-qml-type="radio"][data-qml-group="'+grp+'"]').forEach(function(r){
-        r.innerHTML='<span style="font-size:16px;line-height:1">○</span> '+(r.getAttribute('data-qml-text')||'');
+        r.setAttribute('data-qml-checked','false');
+        if(r.id&&Runtime.ids[r.id])Runtime.ids[r.id].checked=false;
       });
-      t.innerHTML='<span style="font-size:16px;line-height:1">◉</span> '+txt;
+      t.setAttribute('data-qml-checked','true');
+      if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].checked=true;
       runElementHandler(t,'clicked',e);
       break;
     }
@@ -1616,16 +1953,13 @@ document.addEventListener('click',function(e){
       break;
     }
     case'calendar':{
+      if(e.target.closest('.qml-calendar-prev')){renderCalendar(t,-1);return;}
+      if(e.target.closest('.qml-calendar-next')){renderCalendar(t,1);return;}
       var day=e.target.closest('.qml-calendar-day');
       if(!day)return;
-      t.querySelectorAll('.qml-calendar-day').forEach(function(cell){
-        cell.style.background='';cell.style.color='';cell.style.fontWeight='';
-      });
-      day.style.background='var(--qml-accent)';
-      day.style.color='white';
-      day.style.fontWeight='600';
-      var selected=parseInt(day.getAttribute('data-qml-day')||'0',10);
-      t.setAttribute('data-qml-selectedday',String(selected));
+      var selected=day.getAttribute('data-qml-date')||'';
+      t.setAttribute('data-qml-selecteddate',selected);
+      renderCalendar(t,0);
       if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].selectedDate=selected;
       runElementHandler(t,'clicked',e);
       break;
@@ -1655,7 +1989,7 @@ document.addEventListener('click',function(e){
         }else selected=[rowIndex];
         t.setAttribute('data-qml-selected',selected.join(','));
         t.setAttribute('data-qml-currentindex',String(rowIndex));
-        if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].currentIndex=rowIndex;
+        if(t.id&&Runtime.ids[t.id]){Runtime.ids[t.id].currentIndex=rowIndex;Runtime.ids[t.id].selectedIndexes=selected.slice();}
         t.querySelectorAll('.qml-table-cell').forEach(function(tableCell){
           var selectedRow=parseInt(tableCell.getAttribute('data-qml-row')||'-1',10);
           tableCell.style.background=selected.indexOf(selectedRow)>=0?'var(--qml-combo-dd-sel-bg)':'transparent';
@@ -1681,7 +2015,7 @@ document.addEventListener('click',function(e){
         t.setAttribute('data-qml-selected',selected.join(','));
         var treeIndex=parseInt(row.getAttribute('data-qml-index')||'-1',10);
         t.setAttribute('data-qml-currentindex',String(treeIndex));
-        if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].currentIndex=treeIndex;
+        if(t.id&&Runtime.ids[t.id]){Runtime.ids[t.id].currentIndex=treeIndex;Runtime.ids[t.id].selectedIndexes=selected.slice();}
         runElementHandler(t,'activated',e);
       }
       refreshTreeView(t,Runtime.modelDefs[t.getAttribute('data-qml-model-ref')||'']||[]);
@@ -1714,14 +2048,19 @@ document.addEventListener('click',function(e){
       var items;
       try{items=JSON.parse(raw);}catch(e){items=[];}
       if(!items.length)return;
+      var textRole=t.getAttribute('data-qml-textrole')||'text';
       var currentIdx=parseInt(t.getAttribute('data-qml-currentindex')||'-1',10);
+      var comboInput=t.querySelector('.qml-combo-input');
+      var filterText=comboInput?comboInput.value.toLowerCase():'';
       var rect=t.getBoundingClientRect();
       var box=document.createElement('div');
       box.className='qml-combo-dd';
       box.style.cssText='position:fixed;top:'+(rect.bottom+2)+'px;left:'+rect.left+'px;width:'+rect.width+'px;background:var(--qml-combo-dd-bg);border:1px solid var(--qml-combo-dd-border);border-radius:4px;z-index:10000;box-shadow:0 4px 12px var(--qml-combo-dd-shadow);';
       items.forEach(function(item,i){
         var opt=document.createElement('div');
-        opt.textContent=item;
+        var itemText=item&&typeof item==='object'?(item[textRole]===undefined?'':item[textRole]):item;
+        if(filterText&&String(itemText).toLowerCase().indexOf(filterText)<0)return;
+        opt.textContent=String(itemText);
         opt.style.cssText='padding:6px 10px;cursor:pointer;font-size:13px;color:var(--qml-control-text);'+(i===currentIdx?'background:var(--qml-combo-dd-sel-bg);font-weight:600;':'');
         opt.onmouseover=function(){opt.style.background='var(--qml-combo-dd-hover-bg)';};
         opt.onmouseout=function(){opt.style.background=i===currentIdx?'var(--qml-combo-dd-sel-bg)':'';};
@@ -1729,11 +2068,14 @@ document.addEventListener('click',function(e){
           e.stopPropagation();
           t.setAttribute('data-qml-currentindex',String(i));
           var lbl=t.querySelector('span:first-child');
+          var input=t.querySelector('.qml-combo-input');
+          if(input){input.value=String(itemText);}
           if(lbl){
-            lbl.textContent=item;
+            lbl.textContent=String(itemText);
             lbl.style.color='var(--qml-control-text)';
           }
           if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].currentIndex=i;
+          if(t.id&&Runtime.ids[t.id])Runtime.ids[t.id].editText=String(itemText);
           runElementHandler(t,'activated',e);
           box.remove();
         };
@@ -1812,6 +2154,12 @@ document.addEventListener('click',function(e){
     }
   }
 });
+document.addEventListener('input',function(e){
+  var input=e.target.closest('.qml-combo-input');
+  if(!input)return;
+  var combo=input.closest('[data-qml-type="combobox"]');
+  if(combo&&combo.id&&Runtime.ids[combo.id])Runtime.ids[combo.id].editText=input.value;
+});
 // close dropdowns on outside click
 document.addEventListener('click',function(e){
   if(!e.target.closest('[data-qml-type="combobox"]')){
@@ -1841,6 +2189,18 @@ document.addEventListener('dblclick',function(e){
   cell.addEventListener('keydown',function(event){if(event.key==='Enter'){event.preventDefault();cell.blur();}},{once:true});
 });
 document.addEventListener('keydown',function(e){
+  var comboInput=e.target.closest('.qml-combo-input');
+  if(comboInput&&e.key==='Enter'){
+    var combo=comboInput.closest('[data-qml-type="combobox"]');
+    if(!combo)return;
+    var raw=combo.getAttribute('data-qml-model')||'[]';
+    var items=[];try{items=JSON.parse(raw);}catch(_e){}
+    var role=combo.getAttribute('data-qml-textrole')||'text';
+    var found=items.findIndex(function(item){var text=item&&typeof item==='object'?item[role]:item;return String(text).toLowerCase()===comboInput.value.toLowerCase();});
+    if(found>=0){combo.setAttribute('data-qml-currentindex',String(found));if(combo.id&&Runtime.ids[combo.id])Runtime.ids[combo.id].currentIndex=found;runElementHandler(combo,'activated',e);}
+    if(combo.id&&Runtime.ids[combo.id])Runtime.ids[combo.id].editText=comboInput.value;
+    runElementHandler(combo,'accepted',e);e.preventDefault();return;
+  }
   var list=e.target.closest('.qml-listview');
   if(list&&(e.key==='ArrowDown'||e.key==='ArrowUp')){
     var items=Array.prototype.slice.call(list.querySelectorAll('.qml-itemdelegate'));
@@ -1917,6 +2277,16 @@ document.addEventListener('keydown',function(e){
     var rows=rowsForStructuredView(view);
     if(view.classList.contains('qml-tableview'))refreshTableView(view,rows);
     else refreshTreeView(view,rows);
+  });
+
+  document.querySelectorAll('.qml-tableview').forEach(function(view){
+    var rows=rowsForStructuredView(view);if(rows.length<=200)return;
+    view.addEventListener('scroll',function(){
+      var next=Math.max(0,Math.floor(view.scrollTop/30)-20);
+      var current=parseInt(view.getAttribute('data-qml-window-start')||'0',10)||0;
+      if(Math.abs(next-current)<20)return;
+      view.setAttribute('data-qml-window-start',String(next));refreshTableView(view,rows);
+    },{passive:true});
   });
 
   document.querySelectorAll('.qml-listview').forEach(function(view){
