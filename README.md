@@ -2,15 +2,16 @@
 
 基于 Electron + React + TypeScript 的 QML 编辑器与预览工具，支持 Electron 桌面模式和纯 Web 浏览器模式。
 
-** 在 Electron 内部通过 HTML/CSS 模拟渲染基础 QML UI 元素，用于 UI 布局验证。
+在 Electron 或浏览器中通过 HTML/CSS/JavaScript 模拟常用 QML UI 和交互，用于界面布局与行为验证。该预览器不是 Qt QML 运行时的替代品。
 
 ## 功能特性
 
-- **QML 代码编辑**：基于 Monaco Editor，支持 QML 语法高亮
+- **QML 代码编辑**：基于 Monaco Editor，支持语法与语义高亮、上下文补全和代码折叠
 - **自渲染预览**：内置 QML → HTML 渲染引擎，右侧面板直接显示渲染结果
+- **交互行为预览**：支持常用属性绑定、信号处理、模型、状态、动画和导航行为
 - **可调整面板**：左右面板可拖拽调整大小
 - **文件操作**：支持打开文件（多选）、打开目录（批量导入 QML）、保存 QML 文件
-- **多语言支持**：中英文双语界面切换
+- **界面设置**：支持中英文界面和日间/夜间主题切换
 
 ## 技术栈
 
@@ -115,31 +116,30 @@ qml-viewer/
 ### 编辑器
 
 - 左侧面板为 QML 代码编辑器
-- 支持语法高亮：关键字、类型、属性、注释、字符串等
-- 支持代码自动补全和括号匹配
+- 支持 QML 语法与语义高亮：类型、属性、信号、处理器、方法、变量、枚举等
+- 支持代码自动补全、代码折叠和括号匹配
+
+#### 上下文补全快捷键
+
+| 快捷键 | 作用 | 使用位置 |
+|--------|------|----------|
+| `Alt+/` | 显示当前 QML 对象可写的属性，包括 `anchors`、`Layout`、`font` 等分组属性 | 将光标放在对象的 `{ ... }` 内，例如 `Button { }` 内 |
+| `Alt+.` | 显示适合当前对象的子控件；在顶层显示 `pragma`、`import` 和可用根类型 | 将光标放在对象块内添加子项，或放在对象块外添加顶层声明 |
+
+选择建议后按 `Enter` 或 `Tab` 插入。属性值输入到冒号后，编辑器还会根据属性类型提示布尔值、枚举、颜色、模型引用等可用值。
 
 ### 预览（自渲染引擎）
 
 - 右侧面板为 QML 预览区
 - 内置 QML → HTML 渲染引擎，将 QML 代码解析并渲染为 HTML/CSS
 - 点击"刷新预览"按钮即可更新预览
-- 支持的元素：
+- 支持常用 Qt Quick 基础元素、布局、Qt Quick Controls、视图、模型和委托
+- 支持 anchors、Row/Column、Grid/Flow 以及 Qt Quick Layouts 的常见布局方式
+- 支持属性绑定、事件处理器、状态、过渡和常用动画 API
+- 支持 ListView、GridView、PathView、TableView、TreeView 等常用数据视图的预览
+- ChartView、WebEngineView、VideoOutput 和部分图形效果采用浏览器能力近似实现
 
-| QML 元素 | 渲染效果 |
-|-----------|----------|
-| Rectangle | `<div>` + CSS background/border/radius |
-| Text | `<div>` + CSS font/color/text-align |
-| Image | `<div>` + background-image |
-| Item | `<div>` 容器 |
-| Row | `display: flex; flex-direction: row` |
-| Column | `display: flex; flex-direction: column` |
-
-- 支持的布局属性：
-  - `width`, `height`, `x`, `y` → CSS 绝对定位
-  - `anchors.fill`, `anchors.centerIn` → 锚点布局
-  - `anchors.left/right/top/bottom` → 边对齐
-  - `anchors.margins` → 边距
-  - `opacity`, `visible` → 透明度和可见性
+详细支持范围和已知差异见 [QML 兼容性清单](docs/qml-compatibility-checklist.md)。
 
 ### 文件操作
 
@@ -155,20 +155,16 @@ qml-viewer/
 
 ## 渲染引擎说明
 
-### Phase 1 支持的 QML 子集
+### 支持范围
 
-渲染引擎目前支持基础的 QML UI 元素，适用于 UI 布局验证：
-
-- **支持**：Rectangle, Text, Image, Item, Row, Column
-- **支持**：颜色、边框、圆角、字体、对齐、锚点布局
-- **不支持**：属性绑定表达式、信号处理器、ListView/Repeater、动画、ShaderEffect
+渲染引擎面向 QML 界面验证，覆盖常见控件、布局、绑定、信号、模型、视图、状态和动画。部分复杂控件及 Qt 运行时语义使用浏览器近似实现，完整状态以 [QML 兼容性清单](docs/qml-compatibility-checklist.md) 为准。
 
 ### 工作原理
 
-1. `parser.ts`：解析 QML 语法，提取元素树（类型 + 属性 + 子元素）
-2. `elements.ts`：将 QML 元素类型映射到 CSS 样式
-3. `layouts.ts`：处理锚点布局和定位
-4. `renderer.ts`：生成完整的 HTML 文档，通过 iframe 展示在预览面板
+1. `parser.ts`：将 QML 解析为元素、属性、声明和处理器组成的语法树
+2. `elements.ts`：将 QML 类型和属性映射为 HTML 元素及 CSS 样式
+3. `layouts.ts`：处理锚点、定位和布局容器
+4. `renderer.ts`：生成带预览运行时的 HTML 文档，通过双缓冲 iframe 展示
 
 ## 许可证
 
