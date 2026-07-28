@@ -339,17 +339,7 @@ function topLevelItems(
       sortText: `1-import-${moduleName}`,
     }))
 
-  const rootTypes = ['ApplicationWindow', 'Window', 'Item', 'Rectangle', 'Page']
-  const roots: monaco.languages.CompletionItem[] = rootTypes.map(typeName => ({
-    label: typeName,
-    kind: monaco.languages.CompletionItemKind.Class,
-    detail: 'Recommended QML root object',
-    insertText: controlSnippet(typeName),
-    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-    range,
-    sortText: `2-root-${typeName}`,
-  }))
-  return [...pragmas, ...imports, ...roots]
+  return [...pragmas, ...imports]
 }
 
 export function registerQMLCompletionProvider(): monaco.IDisposable {
