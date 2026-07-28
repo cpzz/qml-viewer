@@ -641,7 +641,7 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
     color:var(--qml-muted-text); background:transparent; font:inherit; cursor:pointer;
   }
   .qml-preview-tab:hover { background:var(--qml-combo-dd-hover-bg); color:var(--qml-control-text); }
-  .qml-preview-tab.is-active { color:var(--qml-control-text); border-bottom-color:var(--qml-accent); background:var(--qml-control-bg); }
+  .qml-preview-tab.is-active { color:var(--qml-tab-active-text); border-bottom-color:var(--qml-accent); background:var(--qml-tab-active-bg); font-weight:600; }
   .qml-preview-panels { position:relative; flex:1 1 auto; min-height:0; overflow:hidden; }
   .qml-preview-panel { display:none; position:absolute; inset:0; }
   .qml-preview-panel.is-active { display:block; }
@@ -678,6 +678,8 @@ export function renderQMLToHTML(nodes: QMLNode[], isLight: boolean = true): stri
     --qml-btn-bg: ${isLight ? '#e0e0e0' : '#3a3a3a'};
     --qml-btn-hover-bg: ${isLight ? '#d0d0d0' : '#4a4a4a'};
     --qml-accent: ${isLight ? '#0078d4' : '#4da6ff'};
+    --qml-tab-active-bg: ${isLight ? '#e5f1fb' : '#173a52'};
+    --qml-tab-active-text: ${isLight ? '#005a9e' : '#9bd2ff'};
     --qml-progress-bg: ${isLight ? '#e0e0e0' : '#3a3a3a'};
     --qml-slider-track: ${isLight ? '#dddddd' : '#444444'};
     --qml-switch-off: ${isLight ? '#cccccc' : '#555555'};

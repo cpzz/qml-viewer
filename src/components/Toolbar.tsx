@@ -1,5 +1,5 @@
 import React from 'react'
-import { PanelRightOpen, PanelLeftOpen, FilePlus, File, FolderOpen, Save, RefreshCw, Sun, Moon, Languages, Globe } from 'lucide-react'
+import { PanelRightOpen, PanelLeftOpen, FilePlus, File, FolderOpen, Save, RefreshCw, ScanEye, Scan, Eye, EyeOff, Sun, Moon, Languages, Globe } from 'lucide-react'
 import { useI18n } from '../i18n'
 
 interface ToolbarProps {
@@ -14,9 +14,13 @@ interface ToolbarProps {
   canRefresh: boolean
   showFileList: boolean
   onToggleFileList: () => void
+  showEditor: boolean
+  onToggleEditor: () => void
+  showPreview: boolean
+  onTogglePreview: () => void
 }
 
-export default function Toolbar({ isLight, onToggleTheme, onNew, onOpenFiles, onOpenDirectory, onSave, onRefresh, hasChanges, canRefresh, showFileList, onToggleFileList }: ToolbarProps) {
+export default function Toolbar({ isLight, onToggleTheme, onNew, onOpenFiles, onOpenDirectory, onSave, onRefresh, hasChanges, canRefresh, showFileList, onToggleFileList, showEditor, onToggleEditor, showPreview, onTogglePreview }: ToolbarProps) {
   const { t, locale, toggleLocale } = useI18n()
 
   return (
@@ -39,6 +43,13 @@ export default function Toolbar({ isLight, onToggleTheme, onNew, onOpenFiles, on
       </button>
       <button className="tool-btn" onClick={onRefresh} title={t('toolbar.refresh')} disabled={!canRefresh}>
         <RefreshCw size={18} />
+      </button>
+      <div className="toolbar-separator" />
+      <button className="tool-btn" onClick={onToggleEditor} title={t(showEditor ? 'toolbar.hideEditor' : 'toolbar.showEditor')}>
+        {showEditor ? <Scan size={18} /> : <ScanEye size={18} />}
+      </button>
+      <button className="tool-btn" onClick={onTogglePreview} title={t(showPreview ? 'toolbar.hidePreview' : 'toolbar.showPreview')}>
+        {showPreview ? <EyeOff size={18} /> : <Eye size={18} />}
       </button>
       <div className="toolbar-spacer" />
       <button className="tool-btn" onClick={onToggleTheme} title={t('toolbar.theme')}>

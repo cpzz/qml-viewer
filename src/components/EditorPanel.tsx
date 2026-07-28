@@ -5,6 +5,7 @@ import 'monaco-editor/esm/vs/editor/contrib/find/browser/findController'
 import 'monaco-editor/esm/vs/editor/contrib/folding/browser/folding'
 import 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController'
 import { registerQMLLanguage } from '../utils/qmlLang'
+import { showQMLChildHelp, showQMLContextHelp } from '../utils/qmlCompletion'
 import { useI18n } from '../i18n'
 
 // Configure Monaco Editor workers to load from CDN
@@ -20,9 +21,10 @@ interface EditorPanelProps {
   code: string
   onChange: (value: string) => void
   isLight: boolean
+  readOnly: boolean
 }
 
-export default function EditorPanel({ code, onChange, isLight }: EditorPanelProps) {
+export default function EditorPanel({ code, onChange, isLight, readOnly }: EditorPanelProps) {
   const { locale, t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -47,6 +49,7 @@ export default function EditorPanel({ code, onChange, isLight }: EditorPanelProp
       value: code,
       language: 'qml',
       theme: isLight ? 'vs' : 'vs-dark',
+      readOnly,
       automaticLayout: true,
       minimap: { enabled: false },
       fontSize: 14,
@@ -67,6 +70,13 @@ export default function EditorPanel({ code, onChange, isLight }: EditorPanelProp
     })
 
     editorRef.current = editor
+
+    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.Slash, () => {
+      showQMLContextHelp(editor)
+    })
+    editor.addCommand(monaco.KeyMod.Alt | monaco.KeyCode.Period, () => {
+      showQMLChildHelp(editor)
+    })
 
     editor.onDidChangeModelContent(() => {
       onChangeRef.current(editor.getValue())
@@ -123,6 +133,10 @@ export default function EditorPanel({ code, onChange, isLight }: EditorPanelProp
       })
     }
   }, [isLight])
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ readOnly })
+  }, [readOnly])
 
   // Sync editor content when `code` prop changes
   useEffect(() => {

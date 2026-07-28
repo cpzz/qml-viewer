@@ -417,7 +417,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
 
   RoundButton: {
     tag: 'div',
-    computeStyles: () => ({
+    computeStyles: (props) => ({
       'display': 'inline-flex',
       'align-items': 'center',
       'justify-content': 'center',
@@ -425,7 +425,7 @@ export const ELEMENT_MAP: Record<string, ElementMapping> = {
       'height': '32px',
       'background': 'var(--qml-btn-bg)',
       'border': '1px solid var(--qml-control-border)',
-      'border-radius': '50%',
+      'border-radius': props.radius ? toCSSPx(props.radius) : '9999px',
       'font-size': '13px',
       'font-weight': 'bold',
       'cursor': 'pointer',

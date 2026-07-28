@@ -37,6 +37,8 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isLight, setIsLight] = useState(false)
   const [showFileList, setShowFileList] = useState(true)
+  const [showEditor, setShowEditor] = useState(true)
+  const [showPreview, setShowPreview] = useState(true)
   const [fileListWidth, setFileListWidth] = useState(200)
   const [isDraggingFL, setIsDraggingFL] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
@@ -45,24 +47,9 @@ export default function App() {
   const filesRef = useRef(files)
   const browserFileStoreRef = useRef<Map<string, string>>(new Map())
   const browserFileHandleRef = useRef<Map<string, any>>(new Map())
+  const browserDirectoryHandlesRef = useRef<any[]>([])
   const tabFileHandleRef = useRef<Map<string, any>>(new Map())
   filesRef.current = files
-  const initializedRef = useRef(false)
-
-  // Create default untitled tab on first mount
-  useEffect(() => {
-    if (initializedRef.current) return
-    initializedRef.current = true
-    const tab: FileTab = {
-      id: nextId(),
-      name: 'untitled.qml',
-      path: null,
-      content: NEW_FILE_CONTENT,
-      originalContent: NEW_FILE_CONTENT,
-    }
-    setFiles([tab])
-    setActiveId(tab.id)
-  }, [])
 
   const activeTab = files.find((f) => f.id === activeId) ?? null
   const code = activeTab?.content ?? NEW_FILE_CONTENT
@@ -101,10 +88,40 @@ export default function App() {
   const addFileItems = useCallback((itemsToAdd: FileItem[]) => {
     setFileItems(prev => {
       const existing = new Set(prev.map(i => i.path))
-      const uniqueItems = itemsToAdd.filter(i => !existing.has(i.path))
+      const uniqueItems = itemsToAdd.filter((item) => {
+        if (existing.has(item.path)) return false
+        existing.add(item.path)
+        return true
+      })
       if (uniqueItems.length === 0) return prev
       return [...prev, ...uniqueItems]
     })
+  }, [])
+
+  const findMatchingHandlePath = useCallback(async (handle: any): Promise<string | null> => {
+    for (const [path, existingHandle] of browserFileHandleRef.current) {
+      if (handle === existingHandle) return path
+      if (typeof handle?.isSameEntry !== 'function') continue
+      try {
+        if (await handle.isSameEntry(existingHandle)) return path
+      } catch {
+        // Ignore stale or revoked handles and continue checking.
+      }
+    }
+    return null
+  }, [])
+
+  const hasMatchingDirectoryHandle = useCallback(async (handle: any): Promise<boolean> => {
+    for (const existingHandle of browserDirectoryHandlesRef.current) {
+      if (handle === existingHandle) return true
+      if (typeof handle?.isSameEntry !== 'function') continue
+      try {
+        if (await handle.isSameEntry(existingHandle)) return true
+      } catch {
+        // Ignore stale or revoked handles and continue checking.
+      }
+    }
+    return false
   }, [])
 
   // --- Drag and drop files (window-level) ---
@@ -154,6 +171,7 @@ export default function App() {
       const loadedItems: FileItem[] = []
 
       const loadFileHandle = async (fileHandle: any, preferredPath?: string) => {
+        if (await findMatchingHandlePath(fileHandle)) return
         const file = await fileHandle.getFile()
         if (!file.name.toLowerCase().endsWith('.qml')) return
         const path = getUniquePath(preferredPath || `web:/${file.name}`)
@@ -189,6 +207,8 @@ export default function App() {
         }
         if (!handle) continue
         if (handle.kind === 'directory') {
+          if (await hasMatchingDirectoryHandle(handle)) continue
+          browserDirectoryHandlesRef.current.push(handle)
           await walkDir(handle, handle.name || '')
         } else if (handle.kind === 'file') {
           await loadFileHandle(handle)
@@ -232,7 +252,7 @@ export default function App() {
       document.removeEventListener('dragover', handleDragOver, true)
       document.removeEventListener('drop', handleDrop, true)
     }
-  }, [addFileItems, t])
+  }, [addFileItems, findMatchingHandlePath, hasMatchingDirectoryHandle, t])
 
   // --- 监听 preload 通过 IPC 发送的拖拽路径 ---
   useEffect(() => {
@@ -267,7 +287,10 @@ export default function App() {
   }, [addFileItems])
 
   const getUniqueWebPath = useCallback((basePath: string) => {
-    const existingPaths = new Set(fileItems.map(i => i.path))
+    const existingPaths = new Set([
+      ...fileItems.map(i => i.path),
+      ...browserFileStoreRef.current.keys(),
+    ])
     if (!existingPaths.has(basePath)) return basePath
     const dotIndex = basePath.lastIndexOf('.')
     const base = dotIndex > 0 ? basePath.slice(0, dotIndex) : basePath
@@ -282,6 +305,7 @@ export default function App() {
   }, [fileItems])
 
   const loadWebFileHandle = useCallback(async (handle: any, preferredPath?: string) => {
+    if (await findMatchingHandlePath(handle)) return null
     const file = await handle.getFile()
     if (!file.name.toLowerCase().endsWith('.qml')) return null
     const content = await file.text()
@@ -290,7 +314,7 @@ export default function App() {
     browserFileStoreRef.current.set(filePath, content)
     browserFileHandleRef.current.set(filePath, handle)
     return { filePath, content }
-  }, [getUniqueWebPath])
+  }, [findMatchingHandlePath, getUniqueWebPath])
 
   const openWebFilesWithHandles = useCallback(async () => {
     const picker = (window as any).showOpenFilePicker
@@ -303,8 +327,12 @@ export default function App() {
       types: [{ description: 'QML Files', accept: { 'text/plain': ['.qml'] } }],
       excludeAcceptAllOption: true,
     })
-    const loaded = await Promise.all(handles.map(handle => loadWebFileHandle(handle)))
-    return loaded.filter((item): item is { filePath: string; content: string } => !!item)
+    const loaded: Array<{ filePath: string; content: string }> = []
+    for (const handle of handles) {
+      const item = await loadWebFileHandle(handle)
+      if (item) loaded.push(item)
+    }
+    return loaded
   }, [loadWebFileHandle])
 
   const openWebDirectoryWithHandles = useCallback(async () => {
@@ -315,6 +343,8 @@ export default function App() {
     }
 
     const root = await picker()
+    if (await hasMatchingDirectoryHandle(root)) return []
+    browserDirectoryHandlesRef.current.push(root)
     const results: Array<{ name: string; path: string; type: 'file' | 'directory' }> = []
 
     const walk = async (dirHandle: any, prefix: string) => {
@@ -339,7 +369,7 @@ export default function App() {
 
     await walk(root, '')
     return results
-  }, [loadWebFileHandle])
+  }, [hasMatchingDirectoryHandle, loadWebFileHandle])
 
   const saveTab = useCallback(async (tab: FileTab): Promise<boolean> => {
     if (!window.electronAPI?.saveFile) {
@@ -632,6 +662,14 @@ export default function App() {
     setShowFileList((prev) => !prev)
   }, [])
 
+  const handleToggleEditor = useCallback(() => {
+    setShowEditor((prev) => !prev)
+  }, [])
+
+  const handleTogglePreview = useCallback(() => {
+    setShowPreview((prev) => !prev)
+  }, [])
+
   useEffect(() => {
     document.documentElement.classList.toggle('light', isLight)
   }, [isLight])
@@ -650,6 +688,10 @@ export default function App() {
         canRefresh={canRefresh}
         showFileList={showFileList}
         onToggleFileList={handleToggleFileList}
+        showEditor={showEditor}
+        onToggleEditor={handleToggleEditor}
+        showPreview={showPreview}
+        onTogglePreview={handleTogglePreview}
       />
       <div
         ref={containerRef}
@@ -670,9 +712,11 @@ export default function App() {
           </>
         )}
         <SplitPane
+          showLeft={showEditor}
+          showRight={showPreview}
           left={
             <Suspense fallback={<div className="editor-panel"><div className="editor-container" /></div>}>
-              <EditorPanel code={code} onChange={handleCodeChange} isLight={isLight} />
+              <EditorPanel code={code} onChange={handleCodeChange} isLight={isLight} readOnly={!activeTab} />
             </Suspense>
           }
           right={<PreviewPanel code={code} isLight={isLight} />}

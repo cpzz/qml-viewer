@@ -2,6 +2,10 @@ export default {
   toolbar: {
     hideFileList: 'Hide file list',
     showFileList: 'Show file list',
+    hideEditor: 'Hide editor panel',
+    showEditor: 'Show editor panel',
+    hidePreview: 'Hide preview panel',
+    showPreview: 'Show preview panel',
     new: 'New File',
     openFile: 'Open File',
     openDirectory: 'Open Directory',

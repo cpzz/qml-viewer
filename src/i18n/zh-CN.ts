@@ -2,6 +2,10 @@ export default {
   toolbar: {
     hideFileList: '隐藏文件列表',
     showFileList: '显示文件列表',
+    hideEditor: '隐藏编辑面板',
+    showEditor: '显示编辑面板',
+    hidePreview: '隐藏预览面板',
+    showPreview: '显示预览面板',
     new: '新建文件',
     openFile: '打开文件',
     openDirectory: '打开目录',

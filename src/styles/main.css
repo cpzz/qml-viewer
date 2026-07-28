@@ -159,6 +159,8 @@ body {
 .split-pane {
   display: flex;
   flex-direction: row;
+  flex: 1 1 auto;
+  min-width: 0;
   height: 100%;
   overflow: hidden;
 }
@@ -180,7 +182,7 @@ body {
 }
 
 .right-pane {
-  flex: 0 0 1200px;
+  flex: 1 1 auto;
   overflow: hidden;
   min-width: 200px;
   height: 100%;

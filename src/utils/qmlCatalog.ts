@@ -72,7 +72,7 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
   ColumnLayout: [property('spacing', 'number')],
   GridLayout: [property('columns', 'number'), property('rows', 'number'), property('rowSpacing', 'number'), property('columnSpacing', 'number')],
   Button: clickProperties,
-  RoundButton: clickProperties,
+  RoundButton: [...clickProperties, property('radius', 'number')],
   ToolButton: clickProperties,
   DelayButton: [...clickProperties, property('delay', 'number'), property('progress', 'number')],
   CheckBox: [property('text', 'string'), property('checked', 'boolean'), property('onClicked', 'handler'), property('onToggled', 'handler')],
@@ -175,6 +175,39 @@ export const qmlSyntaxSnippets = [
   { label: 'function', insertText: 'function ${1:name}(${2}) {\n\t$0\n}' },
   { label: 'component', insertText: 'component ${1:Name}: ${2:Item} {\n\t$0\n}' },
 ]
+
+const visualContent = [
+  'Label', 'Text', 'Image', 'Button', 'CheckBox', 'RadioButton', 'Switch',
+  'TextField', 'TextArea', 'ComboBox', 'Slider', 'ProgressBar', 'Rectangle',
+  'Row', 'Column', 'RowLayout', 'ColumnLayout', 'GridLayout', 'Item',
+]
+
+export const recommendedChildren: Record<string, string[]> = {
+  ApplicationWindow: ['Page', 'ColumnLayout', 'RowLayout', 'ToolBar', 'MenuBar', 'Dialog', 'Popup', ...visualContent],
+  Window: ['ColumnLayout', 'RowLayout', 'Dialog', 'Popup', ...visualContent],
+  Page: ['ColumnLayout', 'RowLayout', 'GridLayout', 'ToolBar', ...visualContent],
+  Pane: visualContent,
+  Frame: visualContent,
+  GroupBox: visualContent,
+  Rectangle: visualContent,
+  Item: visualContent,
+  Row: visualContent,
+  Column: visualContent,
+  Flow: visualContent,
+  RowLayout: visualContent,
+  ColumnLayout: visualContent,
+  GridLayout: visualContent,
+  ScrollView: ['Column', 'Row', 'ListView', 'GridView', 'TextArea', ...visualContent],
+  Flickable: ['Item', 'Column', 'Row', 'Image', 'Rectangle'],
+  MenuBar: ['Menu'],
+  Menu: ['MenuItem', 'MenuSeparator', 'Menu'],
+  TabBar: ['TabButton'],
+  Dialog: ['ColumnLayout', 'RowLayout', 'Label', 'TextField', 'Button', 'CheckBox'],
+  Popup: visualContent,
+  Drawer: visualContent,
+  StackLayout: ['Page', 'Item', 'ColumnLayout', 'RowLayout', ...visualContent],
+  SwipeView: ['Page', 'Item', 'ColumnLayout', ...visualContent],
+}
 
 export function controlSnippet(type: string): string {
   const snippets: Record<string, string> = {

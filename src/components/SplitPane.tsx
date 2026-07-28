@@ -3,9 +3,11 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 interface SplitPaneProps {
   left: React.ReactNode
   right: React.ReactNode
+  showLeft: boolean
+  showRight: boolean
 }
 
-export default function SplitPane({ left, right }: SplitPaneProps) {
+export default function SplitPane({ left, right, showLeft, showRight }: SplitPaneProps) {
   const [leftWidth, setLeftWidth] = useState(400)
   const [isDragging, setIsDragging] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -52,13 +54,15 @@ export default function SplitPane({ left, right }: SplitPaneProps) {
 
   return (
     <div ref={containerRef} className={`split-pane${isDragging ? ' dragging' : ''}`}>
-      <div className="left-pane" style={{ width: leftWidth }}>
+      <div className="left-pane" hidden={!showLeft} style={showRight ? { width: leftWidth } : { width: '100%', flex: '1 1 auto' }}>
         {left}
       </div>
-      <div className="divider" onMouseDown={handleMouseDown}>
-        <div className="divider-line" />
-      </div>
-      <div className="right-pane">{right}</div>
+      {showLeft && showRight && (
+        <div className="divider" onMouseDown={handleMouseDown}>
+          <div className="divider-line" />
+        </div>
+      )}
+      <div className="right-pane" hidden={!showRight} style={showLeft ? undefined : { flex: '1 1 auto', width: '100%', minWidth: 0 }}>{right}</div>
     </div>
   )
 }
