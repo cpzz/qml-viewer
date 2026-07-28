@@ -4,6 +4,7 @@ import {
   groupedProperties,
   namespaceMembers,
   qmlImports,
+  qmlPragmas,
   qmlSyntaxSnippets,
   qmlTypeMap,
   qmlTypes,
@@ -245,14 +246,49 @@ function importInsertionEdit(model: monaco.editor.ITextModel, moduleName: string
   }
 }
 
+function pragmaInsertionEdit(model: monaco.editor.ITextModel, pragma: string): monaco.editor.ISingleEditOperation {
+  let lastPragmaLine = 0
+  for (let lineNumber = 1; lineNumber <= model.getLineCount(); lineNumber++) {
+    if (/^\s*pragma\s+/.test(model.getLineContent(lineNumber))) lastPragmaLine = lineNumber
+  }
+
+  if (lastPragmaLine > 0) {
+    const column = model.getLineMaxColumn(lastPragmaLine)
+    return {
+      range: new monaco.Range(lastPragmaLine, column, lastPragmaLine, column),
+      text: `\npragma ${pragma}`,
+    }
+  }
+
+  return {
+    range: new monaco.Range(1, 1, 1, 1),
+    text: `pragma ${pragma}\n\n`,
+  }
+}
+
 function topLevelItems(
   model: monaco.editor.ITextModel,
   source: string,
   range: monaco.Range,
 ): monaco.languages.CompletionItem[] {
+  const existingPragmas = new Set(
+    [...source.matchAll(/^\s*pragma\s+([^\n;]+)/gm)].map(match => match[1].trim()),
+  )
   const importedModules = new Set(
     [...source.matchAll(/^\s*import\s+([A-Za-z0-9_.]+)/gm)].map(match => match[1]),
   )
+  const pragmas: monaco.languages.CompletionItem[] = qmlPragmas
+    .filter(pragma => !existingPragmas.has(pragma))
+    .map(pragma => ({
+      label: `pragma ${pragma}`,
+      filterText: pragma,
+      kind: monaco.languages.CompletionItemKind.Keyword,
+      detail: 'Add QML pragma before imports',
+      insertText: '',
+      range,
+      additionalTextEdits: [pragmaInsertionEdit(model, pragma)],
+      sortText: `0-pragma-${pragma}`,
+    }))
   const imports: monaco.languages.CompletionItem[] = qmlImports
     .filter(moduleName => !importedModules.has(moduleName))
     .map(moduleName => ({
@@ -263,7 +299,7 @@ function topLevelItems(
       insertText: '',
       range,
       additionalTextEdits: [importInsertionEdit(model, moduleName)],
-      sortText: `0-import-${moduleName}`,
+      sortText: `1-import-${moduleName}`,
     }))
 
   const rootTypes = ['ApplicationWindow', 'Window', 'Item', 'Rectangle', 'Page']
@@ -274,9 +310,9 @@ function topLevelItems(
     insertText: controlSnippet(typeName),
     insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
     range,
-    sortText: `1-root-${typeName}`,
+    sortText: `2-root-${typeName}`,
   }))
-  return [...imports, ...roots]
+  return [...pragmas, ...imports, ...roots]
 }
 
 export function registerQMLCompletionProvider(): monaco.IDisposable {
@@ -292,6 +328,21 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
       const line = model.getLineContent(position.lineNumber)
       const linePrefix = line.slice(0, position.column - 1)
       const range = wordRange(model, position)
+
+      const pragmaMatch = linePrefix.match(/^\s*pragma\s+([A-Za-z0-9_: ]*)$/)
+      if (pragmaMatch) {
+        const valueStartColumn = linePrefix.indexOf(pragmaMatch[1], linePrefix.indexOf('pragma') + 6) + 1
+        const pragmaRange = new monaco.Range(position.lineNumber, valueStartColumn, position.lineNumber, position.column)
+        return {
+          suggestions: qmlPragmas.map(pragma => ({
+            label: pragma,
+            kind: monaco.languages.CompletionItemKind.Keyword,
+            insertText: pragma,
+            detail: 'QML pragma',
+            range: pragmaRange,
+          })),
+        }
+      }
 
       const importMatch = linePrefix.match(/^\s*import\s+([A-Za-z0-9_.]*)$/)
       if (importMatch) {

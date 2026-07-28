@@ -66,7 +66,7 @@ function stripComments(input: string): string {
 
 function preprocess(input: string): string {
   return stripComments(input)
-    .replace(/import\s+[^;\n]+/g, '')
+    .replace(/^\s*(?:pragma|import)\s+[^;\n]+;?\s*$/gm, '')
     .split('\n')
     .map(l => l.trim())
     .filter(l => l.length > 0)

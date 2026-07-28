@@ -167,6 +167,12 @@ export const namespaceMembers: Record<string, string[]> = {
 
 export const qmlImports = ['QtQuick', 'QtQuick.Controls', 'QtQuick.Layouts', 'QtQuick.Window', 'QtQuick.Dialogs', 'QtQuick.Shapes', 'QtMultimedia', 'QtWebEngine']
 
+export const qmlPragmas = [
+  'Singleton',
+  'ComponentBehavior: Bound',
+  'NativeMethodBehavior: AcceptThisObject',
+]
+
 export const qmlSyntaxSnippets = [
   { label: 'property', insertText: 'property ${1:var} ${2:name}: ${3:value}' },
   { label: 'readonly property', insertText: 'readonly property ${1:var} ${2:name}: ${3:value}' },
