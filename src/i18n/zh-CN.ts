@@ -8,6 +8,7 @@ export default {
     showPreview: '显示预览面板',
     hideLogPanel: '隐藏日志面板',
     showLogPanel: '显示日志面板',
+    clearLogs: '清空日志',
     new: '新建文件',
     openFile: '打开文件',
     openDirectory: '打开目录',
@@ -27,6 +28,9 @@ export default {
     findReplace: '查找 / 替换',
     find: '查找',
     replace: '替换',
+  },
+  logPanel: {
+    empty: '暂无日志',
   },
   alerts: {
     unsupportedOpenFiles: '当前浏览器不支持直接打开文件，请使用支持 File System Access API 的浏览器。',

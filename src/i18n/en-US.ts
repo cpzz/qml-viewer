@@ -8,6 +8,7 @@ export default {
     showPreview: 'Show preview panel',
     hideLogPanel: 'Hide log panel',
     showLogPanel: 'Show log panel',
+    clearLogs: 'Clear logs',
     new: 'New File',
     openFile: 'Open File',
     openDirectory: 'Open Directory',
@@ -27,6 +28,9 @@ export default {
     findReplace: 'Find / Replace',
     find: 'Find',
     replace: 'Replace',
+  },
+  logPanel: {
+    empty: 'No logs',
   },
   alerts: {
     unsupportedOpenFiles: 'This browser does not support direct file opening. Please use a browser with the File System Access API.',

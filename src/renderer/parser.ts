@@ -404,7 +404,7 @@ function parseElement(s: string, pos: number): [QMLNode, number] | null {
             else if (s[pos] === '}') innerDepth--
             pos++
           }
-          if (/^on[A-Z]/.test(key)) {
+          if (/^on[A-Z]/.test(key) || key === 'Component.onCompleted') {
             node.properties[key] = s.slice(blockStart, pos)
           }
           continue

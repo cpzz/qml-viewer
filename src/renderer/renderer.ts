@@ -533,6 +533,10 @@ function renderNode(node: QMLNode, parentType?: string, modelMap: ListModelMap =
   if (signalAttrs.length > 0) {
     extraAttrStr += (extraAttrStr ? ' ' : ' ') + signalAttrs.join(' ')
   }
+  const completedHandler = node.properties['Component.onCompleted']
+  if (completedHandler) {
+    extraAttrStr += `${extraAttrStr ? ' ' : ' '}data-qml-oncompleted="${escapeAttr(completedHandler)}"`
+  }
 
   const runtimeAttrs: string[] = []
   if (useFlowOffset) {
@@ -1861,6 +1865,10 @@ document.querySelectorAll('[data-qml-loader="true"]').forEach(function(el){
   }
 });
 applyBindings();
+document.querySelectorAll('[data-qml-oncompleted]').forEach(function(element){
+  var code=element.getAttribute('data-qml-oncompleted')||'';
+  execCode(code, element.id&&Runtime.ids[element.id]?Runtime.ids[element.id]:{});
+});
 document.addEventListener('click',function(e){
   var t=e.target.closest('[data-qml-type]');
   if(!t)return;

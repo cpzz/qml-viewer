@@ -3,6 +3,7 @@ import Toolbar from './components/Toolbar'
 import SplitPane from './components/SplitPane'
 import PreviewPanel from './components/PreviewPanel'
 import FileExplorer from './components/FileExplorer'
+import { Trash2 } from 'lucide-react'
 import { useI18n } from './i18n'
 import type { FileTab } from './components/FileList'
 import type { FileItem } from '../electron/fileOps'
@@ -31,6 +32,12 @@ interface PreviewLogEntry {
   level: 'log' | 'info' | 'warn' | 'error'
   message: string
   timestamp: number
+}
+
+function formatLogTimestamp(timestamp: number): string {
+  const date = new Date(timestamp)
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
 }
 
 let _tabId = 1
@@ -729,6 +736,10 @@ export default function App() {
     setShowLogPanel((prev) => !prev)
   }, [])
 
+  const handleClearPreviewLogs = useCallback(() => {
+    setPreviewLogs([])
+  }, [])
+
   const handleLogDividerMouseDown = useCallback((event: React.MouseEvent) => {
     event.preventDefault()
     setIsDraggingLogDivider(true)
@@ -822,20 +833,32 @@ export default function App() {
                     <div className="preview-log-divider-line" />
                   </div>
                   <div className="preview-log-panel" style={{ height: logPanelHeight }}>
-                  <div className="preview-log-list">
-                    {previewLogs.length === 0 ? (
-                      <div className="preview-log-empty">No logs</div>
-                    ) : previewLogs.map((entry) => {
-                      const time = new Date(entry.timestamp).toLocaleTimeString()
-                      return (
-                        <div key={entry.id} className={`preview-log-item preview-log-item-${entry.level}`}>
-                          <span className="preview-log-time">[{time}]</span>
-                          <span className="preview-log-level">{entry.level.toUpperCase()}</span>
-                          <span className="preview-log-message">{entry.message}</span>
-                        </div>
-                      )
-                    })}
-                  </div>
+                    <div className="preview-log-toolbar">
+                      <button
+                        className="preview-log-clear"
+                        type="button"
+                        title={t('toolbar.clearLogs')}
+                        aria-label={t('toolbar.clearLogs')}
+                        disabled={previewLogs.length === 0}
+                        onClick={handleClearPreviewLogs}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                    <div className="preview-log-list">
+                      {previewLogs.length === 0 ? (
+                        <div className="preview-log-empty">{t('logPanel.empty')}</div>
+                      ) : previewLogs.map((entry) => {
+                        const time = formatLogTimestamp(entry.timestamp)
+                        return (
+                          <div key={entry.id} className={`preview-log-item preview-log-item-${entry.level}`}>
+                            <span className="preview-log-time">[{time}]</span>
+                            <span className="preview-log-level">[{entry.level.toUpperCase()}]</span>
+                            <span className="preview-log-message">{entry.message}</span>
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 </>
               )}
