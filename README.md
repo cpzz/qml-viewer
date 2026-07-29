@@ -1,5 +1,7 @@
 # QML Viewer
 
+English version: [README.en.md](README.en.md)
+
 基于 Electron + React + TypeScript 的 QML 编辑器与预览工具，支持 Electron 桌面模式和纯 Web 浏览器模式。
 
 在 Electron 或浏览器中通过 HTML/CSS/JavaScript 模拟常用 QML UI 和交互，用于界面布局与行为验证。该预览器不是 Qt QML 运行时的替代品。
