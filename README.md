@@ -39,6 +39,18 @@ npm install
 npm run dev
 ```
 
+指定端口运行（注意 `--` 用于把参数透传给 Vite）：
+
+```bash
+npm run dev -- --port 5175
+```
+
+端口被占用时直接报错（不自动跳到下一个端口）：
+
+```bash
+npm run dev -- --port 5175 --strictPort
+```
+
 ### 开发模式（Windows / Electron）
 
 ```bash
@@ -61,6 +73,12 @@ npm run build:win
 
 ```bash
 npm run server
+```
+
+指定预览端口：
+
+```bash
+npm run server -- --port 5175
 ```
 
 ### 预览构建结果（Windows / Electron 窗口）

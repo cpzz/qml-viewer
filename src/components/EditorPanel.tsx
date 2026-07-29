@@ -25,14 +25,50 @@ interface EditorPanelProps {
   readOnly: boolean
 }
 
+function isQmlPropertyColon(model: monaco.editor.ITextModel, position: monaco.Position): boolean {
+  const colonOffset = model.getOffsetAt(position) - 1
+  const source = model.getValue().slice(0, colonOffset + 1)
+  let state: 'code' | 'single' | 'double' | 'lineComment' | 'blockComment' = 'code'
+
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index]
+    const next = source[index + 1]
+    const previous = source[index - 1]
+    if (state === 'lineComment') {
+      if (char === '\n') state = 'code'
+      continue
+    }
+    if (state === 'blockComment') {
+      if (char === '*' && next === '/') { state = 'code'; index++ }
+      continue
+    }
+    if (state === 'single' || state === 'double') {
+      const quote = state === 'single' ? "'" : '"'
+      if (char === quote && previous !== '\\') state = 'code'
+      continue
+    }
+    if (char === '/' && next === '/') { state = 'lineComment'; index++; continue }
+    if (char === '/' && next === '*') { state = 'blockComment'; index++; continue }
+    if (char === "'") { state = 'single'; continue }
+    if (char === '"') state = 'double'
+  }
+  if (state !== 'code') return false
+
+  const linePrefix = model.getLineContent(position.lineNumber).slice(0, position.column - 1)
+  return /^\s*[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*\s*:$/.test(linePrefix) ||
+    /^\s*(?:(?:readonly|required|default)\s+)?property\s+(?:alias|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+[A-Za-z_]\w*\s*:$/.test(linePrefix)
+}
+
 export default function EditorPanel({ code, onChange, isLight, readOnly }: EditorPanelProps) {
   const { locale, t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
   const onChangeRef = useRef(onChange)
+  const readOnlyRef = useRef(readOnly)
   const labelsRef = useRef({ findReplace: '', find: '', replace: '' })
   const updateFindWidgetRef = useRef<() => void>(() => {})
   onChangeRef.current = onChange
+  readOnlyRef.current = readOnly
   labelsRef.current = {
     findReplace: t('editor.findReplace'),
     find: t('editor.find'),
@@ -80,8 +116,33 @@ export default function EditorPanel({ code, onChange, isLight, readOnly }: Edito
       showQMLChildHelp(editor)
     })
 
-    editor.onDidChangeModelContent(() => {
+    editor.onDidChangeModelContent((event) => {
+      if (event.isFlush) return
       onChangeRef.current(editor.getValue())
+    })
+
+    editor.onDidType((text) => {
+      if (text !== ':' || readOnlyRef.current) return
+      const model = editor.getModel()
+      const position = editor.getPosition()
+      if (!model || !position || !isQmlPropertyColon(model, position)) return
+      const nextCharacter = model.getValueInRange(new monaco.Range(
+        position.lineNumber,
+        position.column,
+        position.lineNumber,
+        position.column + 1,
+      ))
+      if (/\s/.test(nextCharacter)) return
+      editor.executeEdits('qml-colon-spacing', [{
+        range: new monaco.Range(
+          position.lineNumber,
+          position.column,
+          position.lineNumber,
+          position.column,
+        ),
+        text: ' ',
+      }])
+      editor.setPosition({ lineNumber: position.lineNumber, column: position.column + 1 })
     })
 
     const updateFindWidget = () => {

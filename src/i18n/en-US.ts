@@ -6,6 +6,8 @@ export default {
     showEditor: 'Show editor panel',
     hidePreview: 'Hide preview panel',
     showPreview: 'Show preview panel',
+    hideLogPanel: 'Hide log panel',
+    showLogPanel: 'Show log panel',
     new: 'New File',
     openFile: 'Open File',
     openDirectory: 'Open Directory',

@@ -6,6 +6,8 @@ export default {
     showEditor: '显示编辑面板',
     hidePreview: '隐藏预览面板',
     showPreview: '显示预览面板',
+    hideLogPanel: '隐藏日志面板',
+    showLogPanel: '显示日志面板',
     new: '新建文件',
     openFile: '打开文件',
     openDirectory: '打开目录',

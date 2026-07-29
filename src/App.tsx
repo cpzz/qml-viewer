@@ -26,6 +26,13 @@ declare global {
   }
 }
 
+interface PreviewLogEntry {
+  id: string
+  level: 'log' | 'info' | 'warn' | 'error'
+  message: string
+  timestamp: number
+}
+
 let _tabId = 1
 function nextId(): string { return 'tab-' + (_tabId++) }
 
@@ -39,9 +46,15 @@ export default function App() {
   const [showFileList, setShowFileList] = useState(true)
   const [showEditor, setShowEditor] = useState(true)
   const [showPreview, setShowPreview] = useState(true)
+  const [showLogPanel, setShowLogPanel] = useState(false)
+  const [logPanelHeight, setLogPanelHeight] = useState(180)
+  const [isDraggingLogDivider, setIsDraggingLogDivider] = useState(false)
   const [fileListWidth, setFileListWidth] = useState(200)
   const [isDraggingFL, setIsDraggingFL] = useState(false)
   const [isRefreshing, setIsRefreshing] = useState(false)
+  const [editorRevision, setEditorRevision] = useState(0)
+  const [previewLogs, setPreviewLogs] = useState<PreviewLogEntry[]>([])
+  const previewStackRef = useRef<HTMLDivElement>(null)
   const [fileItems, setFileItems] = useState<FileItem[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
   const filesRef = useRef(files)
@@ -82,6 +95,36 @@ export default function App() {
       document.removeEventListener('mouseup', handleMouseUp)
     }
   }, [isDraggingFL])
+
+  useEffect(() => {
+    if (!isDraggingLogDivider) return
+    const handleMouseMove = (event: MouseEvent) => {
+      if ((event.buttons & 1) === 0) {
+        setIsDraggingLogDivider(false)
+        return
+      }
+      const container = previewStackRef.current
+      if (!container) return
+      const rect = container.getBoundingClientRect()
+      const minMainHeight = 120
+      const minLogHeight = 80
+      const nextLogHeight = rect.bottom - event.clientY
+      const maxLogHeight = Math.max(minLogHeight, rect.height - minMainHeight)
+      setLogPanelHeight(Math.max(minLogHeight, Math.min(maxLogHeight, nextLogHeight)))
+    }
+    const handleMouseUp = () => setIsDraggingLogDivider(false)
+    const handleWindowBlur = () => setIsDraggingLogDivider(false)
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+    window.addEventListener('mouseup', handleMouseUp, true)
+    window.addEventListener('blur', handleWindowBlur)
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+      window.removeEventListener('mouseup', handleMouseUp, true)
+      window.removeEventListener('blur', handleWindowBlur)
+    }
+  }, [isDraggingLogDivider])
 
   // --- File tree callbacks ---
 
@@ -616,14 +659,17 @@ export default function App() {
     setIsRefreshing(true)
     try {
       let refreshedContent: string | null = null
+      let reopenedPath = activeTab.path
+      let webHandle: any = null
       if (window.electronAPI?.readFileByPath && activeTab.path) {
         const result = await window.electronAPI.readFileByPath(activeTab.path)
         refreshedContent = result?.content ?? null
+        reopenedPath = result?.filePath ?? activeTab.path
       } else {
-        const handle = tabFileHandleRef.current.get(activeTab.id) ||
+        webHandle = tabFileHandleRef.current.get(activeTab.id) ||
           (activeTab.path ? browserFileHandleRef.current.get(activeTab.path) : null)
-        if (handle) {
-          const file = await handle.getFile()
+        if (webHandle) {
+          const file = await webHandle.getFile()
           refreshedContent = await file.text()
         }
       }
@@ -633,14 +679,23 @@ export default function App() {
         return
       }
 
-      if (activeTab.path) {
-        browserFileStoreRef.current.set(activeTab.path, refreshedContent)
+      if (reopenedPath) {
+        browserFileStoreRef.current.set(reopenedPath, refreshedContent)
       }
-      setFiles((prev) => prev.map((file) =>
-        file.id === activeTab.id
-          ? { ...file, content: refreshedContent, originalContent: refreshedContent }
-          : file
-      ))
+      const reopenedTab: FileTab = {
+        ...activeTab,
+        id: nextId(),
+        name: reopenedPath?.split(/[\\/]/).pop() || activeTab.name,
+        path: reopenedPath,
+        content: refreshedContent,
+        originalContent: refreshedContent,
+        isNew: false,
+      }
+      tabFileHandleRef.current.delete(activeTab.id)
+      if (webHandle) tabFileHandleRef.current.set(reopenedTab.id, webHandle)
+      setFiles((prev) => prev.map((file) => file.id === activeTab.id ? reopenedTab : file))
+      setActiveId(reopenedTab.id)
+      setEditorRevision((revision) => revision + 1)
     } catch {
       window.alert(t('alerts.refreshFailed'))
     } finally {
@@ -670,6 +725,41 @@ export default function App() {
     setShowPreview((prev) => !prev)
   }, [])
 
+  const handleToggleLogPanel = useCallback(() => {
+    setShowLogPanel((prev) => !prev)
+  }, [])
+
+  const handleLogDividerMouseDown = useCallback((event: React.MouseEvent) => {
+    event.preventDefault()
+    setIsDraggingLogDivider(true)
+  }, [])
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data
+      if (!data || data.type !== 'qml-preview-log') return
+      const level = data.level === 'info' || data.level === 'warn' || data.level === 'error' ? data.level : 'log'
+      const args = Array.isArray(data.args) ? data.args : [String(data.args ?? '')]
+      const message = args.map((part) => String(part)).join(' ')
+      const entry: PreviewLogEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        level,
+        message,
+        timestamp: typeof data.timestamp === 'number' ? data.timestamp : Date.now(),
+      }
+      setPreviewLogs((current) => {
+        const next = [...current, entry]
+        return next.length > 200 ? next.slice(next.length - 200) : next
+      })
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+
+  useEffect(() => {
+    setPreviewLogs([])
+  }, [activeId])
+
   useEffect(() => {
     document.documentElement.classList.toggle('light', isLight)
   }, [isLight])
@@ -692,6 +782,8 @@ export default function App() {
         onToggleEditor={handleToggleEditor}
         showPreview={showPreview}
         onTogglePreview={handleTogglePreview}
+        showLogPanel={showLogPanel}
+        onToggleLogPanel={handleToggleLogPanel}
       />
       <div
         ref={containerRef}
@@ -716,10 +808,39 @@ export default function App() {
           showRight={showPreview}
           left={
             <Suspense fallback={<div className="editor-panel"><div className="editor-container" /></div>}>
-              <EditorPanel code={code} onChange={handleCodeChange} isLight={isLight} readOnly={!activeTab} />
+              <EditorPanel key={editorRevision} code={code} onChange={handleCodeChange} isLight={isLight} readOnly={!activeTab} />
             </Suspense>
           }
-          right={<PreviewPanel code={code} isLight={isLight} />}
+          right={(
+            <div ref={previewStackRef} className={`preview-stack${isDraggingLogDivider ? ' preview-stack-dragging' : ''}`}>
+              <div className="preview-stack-main">
+                <PreviewPanel code={code} isLight={isLight} />
+              </div>
+              {showLogPanel && (
+                <>
+                  <div className="preview-log-divider" onMouseDown={handleLogDividerMouseDown}>
+                    <div className="preview-log-divider-line" />
+                  </div>
+                  <div className="preview-log-panel" style={{ height: logPanelHeight }}>
+                  <div className="preview-log-list">
+                    {previewLogs.length === 0 ? (
+                      <div className="preview-log-empty">No logs</div>
+                    ) : previewLogs.map((entry) => {
+                      const time = new Date(entry.timestamp).toLocaleTimeString()
+                      return (
+                        <div key={entry.id} className={`preview-log-item preview-log-item-${entry.level}`}>
+                          <span className="preview-log-time">[{time}]</span>
+                          <span className="preview-log-level">{entry.level.toUpperCase()}</span>
+                          <span className="preview-log-message">{entry.message}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         />
       </div>
     </div>

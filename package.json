@@ -4,11 +4,11 @@
   "description": "QML Editor and Previewer",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "vite --port 5173",
+    "dev": "vite",
     "dev:win": "vite --config vite.win.config.ts",
     "build": "vite build",
     "build:win": "vite build --config vite.win.config.ts && node -e \"require('fs').copyFileSync('electron/preload.cjs', 'dist-electron/preload.cjs')\"",
-    "server": "vite preview --port 5173",
+    "server": "vite preview",
     "win": "npm run build:win && electron ."
   },
   "keywords": [],

@@ -12,6 +12,45 @@ interface PreviewFrame {
   isLight: boolean
 }
 
+function attachConsoleBridge(html: string): string {
+  const bridge = `<script>(function(){
+    const toText = function(value){
+      if (typeof value === 'string') return value;
+      if (value == null) return String(value);
+      if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') return String(value);
+      try { return JSON.stringify(value); } catch (_error) { return Object.prototype.toString.call(value); }
+    };
+    const send = function(level, args){
+      try {
+        parent.postMessage({
+          type: 'qml-preview-log',
+          level: level,
+          args: Array.prototype.map.call(args, toText),
+          timestamp: Date.now(),
+        }, '*');
+      } catch (_error) {
+        // no-op
+      }
+    };
+    ['log','info','warn','error'].forEach(function(level){
+      const original = console[level] ? console[level].bind(console) : console.log.bind(console);
+      console[level] = function(){
+        send(level, arguments);
+        return original.apply(console, arguments);
+      };
+    });
+    window.addEventListener('error', function(event){
+      send('error', ['Error', event && event.message ? event.message : 'Unknown error']);
+    });
+    window.addEventListener('unhandledrejection', function(event){
+      send('error', ['UnhandledPromiseRejection', event && event.reason !== undefined ? event.reason : 'unknown']);
+    });
+  })();<\/script>`
+  if (html.includes('</head>')) return html.replace('</head>', `${bridge}</head>`)
+  if (html.includes('<body')) return html.replace('<body', `${bridge}<body`)
+  return `${bridge}${html}`
+}
+
 interface PreviewScroll {
   outerTop: number
   outerLeft: number
@@ -51,7 +90,7 @@ export default function PreviewPanel({ code, isLight }: PreviewPanelProps) {
       }
 
       try {
-        const html = parseAndRender(code, isLight)
+        const html = attachConsoleBridge(parseAndRender(code, isLight))
         pendingRef.current = { slot: nextSlot, version, scroll }
         setFrames((current) => current.map((frame, slot) => (
           slot === nextSlot ? { html, version, isLight } : frame
