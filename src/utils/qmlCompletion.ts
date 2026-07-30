@@ -15,6 +15,10 @@ import {
 interface QmlDocumentContext {
   currentType: string | null
   ids: Map<string, string>
+  /** property name → QML primitive type (int, bool, string, …) */
+  declaredProperties: Map<string, string>
+  /** function name → parameter name list */
+  methods: Map<string, string[]>
   inCode: boolean
 }
 
@@ -122,7 +126,25 @@ function scanStructure(source: string, cursorOffset: number): QmlDocumentContext
       if (type) ids.set(token[1], type)
     }
   }
-  return { currentType, ids, inCode: maskedPrefix.inCode }
+  const declaredProperties = new Map<string, string>()
+  const propDeclPattern = /\b(?:readonly\s+|required\s+|default\s+)?property\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+([A-Za-z_]\w*)/g
+  let propMatch: RegExpExecArray | null
+  while ((propMatch = propDeclPattern.exec(maskedAll.text))) {
+    declaredProperties.set(propMatch[2], propMatch[1])
+  }
+
+  const methods = new Map<string, string[]>()
+  const fnPattern = /\bfunction\s+([A-Za-z_]\w*)\s*\(([^)]*?)\)/g
+  let fnMatch: RegExpExecArray | null
+  while ((fnMatch = fnPattern.exec(maskedAll.text))) {
+    const params = fnMatch[2]
+      .split(',')
+      .map(part => part.trim())
+      .filter(Boolean)
+    methods.set(fnMatch[1], params)
+  }
+
+  return { currentType, ids, declaredProperties, methods, inCode: maskedPrefix.inCode }
 }
 
 function snippetForProperty(item: QmlPropertyDefinition): string {
@@ -186,6 +208,55 @@ function literalItem(
   kind = monaco.languages.CompletionItemKind.Value,
 ): monaco.languages.CompletionItem {
   return { label, kind, insertText, detail, range, sortText: `0-${label}` }
+}
+
+function localSymbolItems(
+  context: QmlDocumentContext,
+  range: monaco.Range,
+): monaco.languages.CompletionItem[] {
+  const items: monaco.languages.CompletionItem[] = []
+
+  // IDs
+  for (const [name, type] of context.ids) {
+    items.push({
+      label: name,
+      kind: monaco.languages.CompletionItemKind.Variable,
+      detail: `id · ${type}`,
+      insertText: name,
+      range,
+      sortText: `1-id-${name}`,
+    })
+  }
+
+  // Declared properties
+  for (const [name, type] of context.declaredProperties) {
+    items.push({
+      label: name,
+      kind: monaco.languages.CompletionItemKind.Property,
+      detail: `property ${type}`,
+      insertText: name,
+      range,
+      sortText: `1-prop-${name}`,
+    })
+  }
+
+  // Functions
+  for (const [name, params] of context.methods) {
+    const snippet = params.length > 0
+      ? `${name}(\${1:${params[0]}})`
+      : `${name}($0)`
+    items.push({
+      label: name,
+      kind: monaco.languages.CompletionItemKind.Function,
+      detail: `function(${params.join(', ')})`,
+      insertText: snippet,
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      range,
+      sortText: `1-fn-${name}`,
+    })
+  }
+
+  return items
 }
 
 function referenceItems(values: string[], range: monaco.Range): monaco.languages.CompletionItem[] {
@@ -371,6 +442,46 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
         }
       }
 
+      // property <type> → offer type keyword list
+      const propertyTypeMatch = linePrefix.match(/(?:^|\n)\s*(?:readonly\s+|required\s+|default\s+)?property\s+([A-Za-z0-9_]*)$/)
+      if (propertyTypeMatch) {
+        const typePrefix = propertyTypeMatch[1]
+        const typeStart = linePrefix.lastIndexOf(typePrefix)
+        const typeRange = new monaco.Range(position.lineNumber, typeStart + 1, position.lineNumber, position.column)
+        const propertyTypes = [
+          { name: 'int',      detail: 'integer number' },
+          { name: 'real',     detail: 'floating-point number' },
+          { name: 'double',   detail: 'floating-point number' },
+          { name: 'bool',     detail: 'boolean true/false' },
+          { name: 'string',   detail: 'text string' },
+          { name: 'var',      detail: 'generic / any type' },
+          { name: 'color',    detail: 'color value' },
+          { name: 'url',      detail: 'URL / file path' },
+          { name: 'date',     detail: 'date value' },
+          { name: 'list',     detail: 'list<Type>' },
+          { name: 'alias',    detail: 'property alias' },
+          { name: 'size',     detail: 'width × height' },
+          { name: 'point',    detail: 'x, y coordinate' },
+          { name: 'rect',     detail: 'x, y, width, height' },
+          { name: 'font',     detail: 'font object' },
+          { name: 'vector2d', detail: '2D vector' },
+          { name: 'vector3d', detail: '3D vector' },
+          { name: 'vector4d', detail: '4D vector' },
+        ]
+        return {
+          suggestions: propertyTypes
+            .filter(t => t.name.startsWith(typePrefix))
+            .map((t, index) => ({
+              label: t.name,
+              kind: monaco.languages.CompletionItemKind.TypeParameter,
+              detail: `QML type · ${t.detail}`,
+              insertText: t.name + ' ',
+              range: typeRange,
+              sortText: `0-${String(index).padStart(3, '0')}-${t.name}`,
+            })),
+        }
+      }
+
       const importMatch = linePrefix.match(/^\s*import\s+([A-Za-z0-9_.]*)$/)
       if (importMatch) {
         const moduleStartColumn = linePrefix.lastIndexOf(importMatch[1]) + 1
@@ -445,6 +556,8 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
         if (propertyDefinition?.kind === 'color') {
           suggestions.push(...colorValueItems(range))
         }
+        // Always offer local symbols (ids, declared properties, functions) as candidates
+        suggestions.push(...localSymbolItems(context, range))
         return { suggestions }
       }
 
@@ -470,6 +583,9 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
         sortText: `2-${type.name}`,
       }))
 
+      // Local document symbols: ids, declared properties, functions
+      suggestions.push(...localSymbolItems(context, range))
+
       if (context.currentType) {
         const definition = qmlTypeMap.get(context.currentType)
         if (definition) suggestions.push(...propertyItems(definition.properties, range))
@@ -477,9 +593,12 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
           label: snippet.label,
           kind: monaco.languages.CompletionItemKind.Keyword,
           insertText: snippet.insertText,
-          insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+          insertTextRules: snippet.insertText.includes('$')
+            ? monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+            : undefined,
           range,
           sortText: `3-${snippet.label}`,
+          command: snippet.command,
         })))
       }
       suggestions.push(...topLevelItems(model, source, range))

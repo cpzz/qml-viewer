@@ -68,10 +68,14 @@ export function registerQMLLanguage() {
       'import', 'as', 'property', 'alias', 'signal', 'method', 'function',
       'readonly', 'default', 'required', 'component', 'pragma',
       'enum',
+      // JS control flow
+      'if', 'else', 'for', 'while', 'do', 'break', 'continue', 'return',
+      'switch', 'case', 'let', 'const',
+      'new', 'typeof', 'instanceof', 'void', 'throw', 'try', 'catch', 'finally',
     ],
     typeKeywords: [
-      'int', 'real', 'string', 'bool', 'var', 'color', 'date', 'time',
-      'datetime', 'url', 'vector2d', 'vector3d', 'vector4d', 'quaternion',
+      'int', 'real', 'double', 'string', 'bool', 'var', 'color', 'date', 'time',
+      'datetime', 'url', 'list', 'vector2d', 'vector3d', 'vector4d', 'quaternion',
       'matrix4x4', 'font', 'size', 'point', 'rect',
     ],
     builtins: [
