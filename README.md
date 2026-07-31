@@ -4,13 +4,14 @@ English version: [README.en.md](README.en.md)
 
 基于 Electron + React + TypeScript 的 QML 编辑器与预览工具，支持 Electron 桌面模式和纯 Web 浏览器模式。
 
-在 Electron 或浏览器中通过 HTML/CSS/JavaScript 模拟常用 QML UI 和交互，用于界面布局与行为验证。该预览器不是 Qt QML 运行时的替代品。
+项目内置一个不依赖 Qt 的 Qt Quick 兼容运行时：解析 QML、在隔离的 QuickJS 中执行绑定和处理器，并通过 retained DOM/Canvas 场景图渲染。它面向常用 UI 的布局与行为验证，不追求 Qt ABI 或像素级等价。
 
 ## 功能特性
 
 - **QML 代码编辑**：基于 Monaco Editor，支持语法与语义高亮、上下文补全和代码折叠
 - **自渲染预览**：内置 QML → HTML 渲染引擎，右侧面板直接显示渲染结果
 - **交互行为预览**：支持常用属性绑定、信号处理、模型、状态、动画和导航行为
+- **运行时检查器**：查看当前 QML 对象树、id 和属性快照
 - **可调整面板**：左右面板可拖拽调整大小
 - **文件操作**：支持打开文件（多选）、打开目录（批量导入 QML）、保存 QML 文件
 - **界面设置**：支持中英文界面和日间/夜间主题切换
@@ -65,6 +66,12 @@ npm run dev:win
 npm run build
 ```
 
+### 完整验证
+
+```bash
+npm run check
+```
+
 ### 构建生产版本（Windows / Electron）
 
 ```bash
@@ -102,15 +109,12 @@ qml-viewer/
 ├── src/                       # React 渲染进程
 │   ├── components/           # React 组件
 │   │   ├── EditorPanel.tsx       # 编辑器面板
-│   │   ├── PreviewPanel.tsx      # 预览面板（iframe 显示渲染结果）
+│   │   ├── PreviewPanel.tsx      # owned runtime 预览和对象检查器
 │   │   ├── SplitPane.tsx         # 可拖拽分割面板
 │   │   └── Toolbar.tsx           # 工具栏
-│   ├── renderer/              # QML 渲染引擎
-│   │   ├── parser.ts         # QML 语法解析器
-│   │   ├── elements.ts       # QML 元素 → CSS 映射
-│   │   ├── layouts.ts        # 布局引擎（anchors, Row, Column）
-│   │   ├── renderer.ts       # 渲染器（元素树 → HTML）
-│   │   └── index.ts          # 统一导出
+│   ├── renderer/
+│   │   └── parser.ts         # QML 语法解析器
+│   ├── runtime/              # 对象、绑定、QuickJS、组件和场景图运行时
 │   ├── i18n/                 # 国际化配置
 │   │   ├── index.tsx
 │   │   ├── zh-CN.ts
@@ -181,10 +185,10 @@ qml-viewer/
 
 ### 工作原理
 
-1. `parser.ts`：将 QML 解析为元素、属性、声明和处理器组成的语法树
-2. `elements.ts`：将 QML 类型和属性映射为 HTML 元素及 CSS 样式
-3. `layouts.ts`：处理锚点、定位和布局容器
-4. `renderer.ts`：生成带预览运行时的 HTML 文档，通过双缓冲 iframe 展示
+1. `renderer/parser.ts` 将 QML 解析为带源码位置的语法树
+2. `runtime/QmlDocument.ts` 创建对象树并激活绑定、处理器和 Loader
+3. `runtime/QmlJsEngine.ts` 在隔离的 QuickJS WASM 中执行 JavaScript
+4. `runtime/QmlDomSceneGraph.ts` 把 retained 对象树投影到 DOM、Canvas 和 WebGL
 
 ## 许可证
 

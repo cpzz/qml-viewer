@@ -45,7 +45,7 @@ Status legend:
 | 17 | Repeater/ListView numeric model | `model: 10` | PASS | Delegate expansion implemented. |
 | 18 | ListModel/ListElement binding | `model: peopleModel` | PASS | Delegate data mapping and refresh path present. |
 | 19 | Dynamic model API | `append/remove/setProperty/clear` | PARTIAL | Runtime API exists; covers common validation workflows. |
-| 20 | Loader lifecycle | `active`, `sourceComponent` inline/id | PASS | Active toggle destroy/restore + id component resolution supported. |
+| 20 | Loader lifecycle | `active`, `source`, `sourceComponent` | PASS | Async source resolution, replacement, cancellation, status/progress, and owned cleanup are supported. |
 | 20a | GridView / PathView delegate preview | numeric, array, ListModel models | PARTIAL | Delegate expansion plus PathLine/PathQuad/PathCubic geometry and swipe selection work; advanced PathAttribute/highlight behavior remains approximate. |
 
 ## 5) State and Animation Semantics
@@ -84,7 +84,7 @@ Status legend:
 
 - TODO: Full JavaScript engine parity (scope chain edge cases, async/event loop parity, object model parity)
 - TODO: Full animation subsystem parity (all easing curves, keyframes, behaviors, exact interpolation and timing model)
-- TODO: Complete Loader source URL/module loading and full component lifetime guarantees
+- TODO: Network URL Loader sources and native plugin-backed components
 - TODO: Full focus, key navigation, accessibility, and input-method semantics
 
 ## Suggested Regression Set
@@ -101,8 +101,9 @@ Use this order for quick confidence checks:
 
 ## File anchors
 
-- Renderer runtime: src/renderer/renderer.ts
-- Parser: src/renderer/parser.ts
-- Layout mapping: src/renderer/layouts.ts
-- Element mapping: src/renderer/elements.ts
-- Demo file: src/example.qml
+- Runtime activation: `src/runtime/QmlDocument.ts`
+- Retained scene graph: `src/runtime/QmlDomSceneGraph.ts`
+- Built-in types: `src/runtime/BuiltinQmlTypes.ts`
+- Parser: `src/renderer/parser.ts`
+- Runtime inspector: `src/runtime/QmlInspection.ts`
+- Demo file: `src/example.qml`

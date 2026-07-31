@@ -15,6 +15,7 @@ export default {
     save: 'Save File',
     refresh: 'Refresh',
     theme: 'Toggle light/dark theme',
+    controlStyle: 'QML control style',
     language: '切换到中文',
   },
   fileExplorer: {

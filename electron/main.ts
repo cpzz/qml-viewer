@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, clipboard, net } from 'electron'
 import { fileURLToPath } from 'node:url'
 import { join, basename } from 'node:path'
 import { stat } from 'node:fs/promises'
@@ -133,3 +133,22 @@ ipcMain.handle('file:statBatch', async (_event, filePaths: string[]) => {
   }
   return results
 })
+
+ipcMain.handle('qml:readText', async (_event, filePath: string) => readFile(filePath))
+ipcMain.handle('qml:writeText', async (_event, filePath: string, content: string) => {
+  await writeFile(filePath, content)
+})
+ipcMain.handle('qml:fetchText', async (_event, url: string) => {
+  const parsed = new URL(url)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported QML network protocol ${parsed.protocol}`)
+  }
+  const response = await net.fetch(parsed.toString())
+  return {
+    status: response.status,
+    headers: Object.fromEntries(response.headers.entries()),
+    body: await response.text(),
+  }
+})
+ipcMain.handle('qml:clipboardRead', () => clipboard.readText())
+ipcMain.handle('qml:clipboardWrite', (_event, text: string) => clipboard.writeText(text))

@@ -1,3 +1,5 @@
+import { builtinQmlTypeDefinitions } from '../runtime/BuiltinQmlTypes'
+
 export type QmlPropertyKind =
   | 'string'
   | 'url'
@@ -161,20 +163,7 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
   PropertyAnimation: [property('target', 'expression'), property('property', 'string'), property('from', 'expression'), property('to', 'expression'), property('duration', 'number'), property('running', 'boolean')],
 }
 
-const supportedTypes = [
-  'Rectangle', 'Text', 'Image', 'Item', 'Row', 'Column', 'RowLayout', 'ColumnLayout', 'Flickable', 'ScrollView',
-  'GridLayout', 'Flow', 'Repeater', 'ListModel', 'ListElement', 'Connections', 'Component', 'Loader', 'ScrollBar',
-  'GroupBox', 'Button', 'RoundButton', 'ToolButton', 'CheckBox', 'RadioButton', 'Switch', 'Slider', 'RangeSlider',
-  'Dial', 'SpinBox', 'Tumbler', 'DelayButton', 'ProgressBar', 'TextField', 'TextArea', 'TextInput', 'TextEdit',
-  'ComboBox', 'TabBar', 'TabButton', 'StackLayout', 'SwipeView', 'StackView', 'SplitView', 'Page', 'Pane', 'Frame',
-  'Drawer', 'Popup', 'ToolTip', 'ListView', 'GridView', 'PathView', 'TableView', 'TreeView', 'HorizontalHeaderView',
-  'VerticalHeaderView', 'ItemDelegate', 'BusyIndicator', 'ScrollIndicator', 'ApplicationWindow', 'Window', 'Dialog',
-  'MenuBar', 'Menu', 'MenuItem', 'MenuSeparator', 'Action', 'ActionGroup', 'Shortcut', 'Calendar', 'DatePicker',
-  'TimePicker', 'ShaderEffect', 'DropShadow', 'OpacityMask', 'ChartView', 'WebEngineView', 'VideoOutput', 'Label', 'Timer',
-  'Path', 'PathLine', 'PathQuad', 'PathCubic',
-  'LineSeries', 'SplineSeries', 'BarSeries', 'BarSet', 'PieSeries', 'PieSlice', 'XYPoint',
-  'NumberAnimation', 'ColorAnimation', 'PropertyAnimation',
-]
+const supportedTypes = builtinQmlTypeDefinitions.map(type => type.name)
 
 const methodsByType: Record<string, string[]> = {
   Dialog: ['open()', 'close()', 'accept()', 'reject()'],

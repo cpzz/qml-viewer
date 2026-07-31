@@ -7,6 +7,7 @@ import { Trash2 } from 'lucide-react'
 import { useI18n } from './i18n'
 import type { FileTab } from './components/FileList'
 import type { FileItem } from '../electron/fileOps'
+import type { QmlControlStyle } from './runtime/QmlControlStyle'
 
 const NEW_FILE_CONTENT = ''
 
@@ -22,6 +23,11 @@ declare global {
       readFileByPath: (filePath: string) => Promise<{ content: string; filePath: string } | null>
       readDirectory: (dirPath: string) => Promise<Array<{ name: string; path: string; type: 'file' | 'directory' }>>
       statBatch: (paths: string[]) => Promise<Array<{ path: string; name: string; type: 'file' | 'directory' }>>
+      qmlReadText: (filePath: string) => Promise<string | undefined>
+      qmlWriteText: (filePath: string, content: string) => Promise<void>
+      qmlFetchText: (url: string) => Promise<{ status: number; headers: Record<string, string>; body: string }>
+      qmlClipboardRead: () => Promise<string>
+      qmlClipboardWrite: (text: string) => Promise<void>
       onFilesDropped: (callback: (paths: string[]) => void) => void
     }
   }
@@ -50,6 +56,10 @@ export default function App() {
   const [files, setFiles] = useState<FileTab[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isLight, setIsLight] = useState(false)
+  const [qmlControlStyle, setQmlControlStyle] = useState<QmlControlStyle>(() => {
+    const storedStyle = window.localStorage.getItem('qml-control-style')
+    return storedStyle === 'Universal' || storedStyle === 'Material' ? storedStyle : 'Fusion'
+  })
   const [showFileList, setShowFileList] = useState(true)
   const [showEditor, setShowEditor] = useState(true)
   const [showPreview, setShowPreview] = useState(true)
@@ -775,11 +785,17 @@ export default function App() {
     document.documentElement.classList.toggle('light', isLight)
   }, [isLight])
 
+  useEffect(() => {
+    window.localStorage.setItem('qml-control-style', qmlControlStyle)
+  }, [qmlControlStyle])
+
   return (
     <div className="app-container">
       <Toolbar
         isLight={isLight}
         onToggleTheme={handleToggleTheme}
+        qmlControlStyle={qmlControlStyle}
+        onQmlControlStyleChange={setQmlControlStyle}
         onNew={handleNew}
         onOpenFiles={handleOpenFiles}
         onOpenDirectory={handleOpenDirectory}
@@ -825,7 +841,7 @@ export default function App() {
           right={(
             <div ref={previewStackRef} className={`preview-stack${isDraggingLogDivider ? ' preview-stack-dragging' : ''}`}>
               <div className="preview-stack-main">
-                <PreviewPanel code={code} isLight={isLight} />
+                <PreviewPanel code={code} isLight={isLight} qmlControlStyle={qmlControlStyle} filePath={activeTab?.path} />
               </div>
               {showLogPanel && (
                 <>

@@ -4,13 +4,14 @@ Chinese version: [README.md](README.md)
 
 A QML editor and preview tool built with Electron + React + TypeScript, supporting both Electron desktop mode and a pure web browser mode.
 
-It simulates common QML UI and interactions with HTML/CSS/JavaScript in Electron or the browser for layout and behavior validation. This previewer is not a replacement for the Qt QML runtime.
+It includes a Qt-free Qt Quick-compatible runtime that parses QML, evaluates bindings and handlers in isolated QuickJS, and renders through a retained DOM/Canvas scene graph. It targets layout and behavior validation for common UI, not Qt ABI or pixel parity.
 
 ## Features
 
 - **QML code editing**: Monaco Editor with syntax and semantic highlighting, contextual completion, and code folding
 - **Self-rendered preview**: Built-in QML -> HTML rendering engine that shows the result directly in the right panel
 - **Interactive behavior preview**: Supports common property bindings, signal handlers, models, states, animations, and navigation behavior
+- **Runtime inspector**: Inspect the current QML object tree, ids, and property snapshot
 - **Resizable panels**: Left and right panels can be resized by dragging the divider
 - **File operations**: Open multiple files, open directories for batch QML import, and save QML files
 - **UI settings**: Switch between Chinese and English, and toggle day/night themes
@@ -65,6 +66,12 @@ npm run dev:win
 npm run build
 ```
 
+### Complete validation
+
+```bash
+npm run check
+```
+
 ### Build production version (Windows / Electron)
 
 ```bash
@@ -102,15 +109,12 @@ qml-viewer/
 ├── src/                      # React renderer process
 │   ├── components/           # React components
 │   │   ├── EditorPanel.tsx       # Editor panel
-│   │   ├── PreviewPanel.tsx      # Preview panel (iframe rendering)
+│   │   ├── PreviewPanel.tsx      # Owned runtime preview and object inspector
 │   │   ├── SplitPane.tsx         # Resizable split pane
 │   │   └── Toolbar.tsx           # Toolbar
-│   ├── renderer/             # QML rendering engine
-│   │   ├── parser.ts         # QML parser
-│   │   ├── elements.ts       # QML element -> CSS mapping
-│   │   ├── layouts.ts        # Layout engine (anchors, Row, Column)
-│   │   ├── renderer.ts       # Renderer (element tree -> HTML)
-│   │   └── index.ts          # Unified exports
+│   ├── renderer/
+│   │   └── parser.ts         # QML parser
+│   ├── runtime/              # Objects, bindings, QuickJS, components, and scene graph
 │   ├── i18n/                 # Internationalization config
 │   │   ├── index.tsx
 │   │   ├── zh-CN.ts
@@ -181,10 +185,10 @@ The rendering engine is intended for QML UI validation and covers common control
 
 ### How it works
 
-1. `parser.ts`: parses QML into an element tree with properties, declarations, and handlers
-2. `elements.ts`: maps QML types and properties to HTML elements and CSS styles
-3. `layouts.ts`: handles anchors, positioning, and layout containers
-4. `renderer.ts`: generates HTML documents with preview runtime support and displays them in a double-buffered iframe
+1. `renderer/parser.ts` parses QML into a source-located syntax tree
+2. `runtime/QmlDocument.ts` creates the object tree and activates bindings, handlers, and Loaders
+3. `runtime/QmlJsEngine.ts` evaluates JavaScript in isolated QuickJS WASM
+4. `runtime/QmlDomSceneGraph.ts` projects the retained object tree to DOM, Canvas, and WebGL
 
 ## License
 

@@ -517,7 +517,11 @@ ApplicationWindow {
 
             // 预期：点击 Replay 后蓝色矩形在 2.2 秒内从 x=0 移动到 x=220；可反复点击重新播放。
             Label { text: "Standalone animation:"; font.bold: true }
-            Rectangle { id: animatedBox; width: 52; height: 28; radius: 4; color: "#4f86e8" }
+            Item {
+                width: parent.width
+                height: 28
+                Rectangle { id: animatedBox; width: 52; height: 28; radius: 4; color: "#4f86e8" }
+            }
             Button { text: "Replay animation"; onClicked: standaloneAnimation.restart() }
             NumberAnimation {
                 id: standaloneAnimation
@@ -539,6 +543,7 @@ ApplicationWindow {
             // 预期：Tab 2 为选中样式，StackLayout 仅显示 Content of Tab 2；点击标签后内容同步切换。
             Label { text: "Tab Bar (currentIndex=1):"; font.bold: true }
             TabBar {
+                id: tabBarDemo
                 Layout.fillWidth: true
                 currentIndex: 1
                 TabButton { text: "Tab 1" }
@@ -547,7 +552,7 @@ ApplicationWindow {
             }
             StackLayout {
                 Layout.fillWidth: true
-                currentIndex: 1
+                currentIndex: tabBarDemo.currentIndex
                 Label { text: "Content of Tab 1" }
                 Label { text: "Content of Tab 2" }
                 Label { text: "Content of Tab 3" }
@@ -563,7 +568,7 @@ ApplicationWindow {
                 model: 10
                 currentIndex: 0
                 delegate: ItemDelegate {
-                    text: "Item #${index}"
+                    text: "Item #" + index
                     width: listView.width
                 }
             }
@@ -581,7 +586,7 @@ ApplicationWindow {
                         color: '#6aa9ff'
                         Label {
                             anchors.centerIn: parent
-                            text: '${index}'
+                            text: '' + index
                         }
                     }
                 }
@@ -616,7 +621,7 @@ ApplicationWindow {
                         color: '#eeeeee'
                         border.width: 1
                         border.color: '#cccccc'
-                        Label { anchors.centerIn: parent; text: "Chip ${index}" }
+                        Label { anchors.centerIn: parent; text: "Chip " + index }
                     }
                 }
             }

@@ -1,10 +1,13 @@
 import React from 'react'
-import { PanelRightOpen, PanelLeftOpen, FilePlus, File, FolderOpen, Save, RefreshCw, ScanEye, Scan, Eye, EyeOff, Sun, Moon, Languages, Globe, Captions, CaptionsOff } from 'lucide-react'
+import { PanelRightOpen, PanelLeftOpen, FilePlus, File, FolderOpen, Save, RefreshCw, ScanEye, Scan, Eye, EyeOff, Sun, Moon, Languages, Globe, Captions, CaptionsOff, Palette } from 'lucide-react'
 import { useI18n } from '../i18n'
+import { qmlControlStyles, type QmlControlStyle } from '../runtime/QmlControlStyle'
 
 interface ToolbarProps {
   isLight: boolean
   onToggleTheme: () => void
+  qmlControlStyle: QmlControlStyle
+  onQmlControlStyleChange: (style: QmlControlStyle) => void
   onNew: () => void
   onOpenFiles: () => void
   onOpenDirectory: () => void
@@ -22,7 +25,7 @@ interface ToolbarProps {
   onToggleLogPanel: () => void
 }
 
-export default function Toolbar({ isLight, onToggleTheme, onNew, onOpenFiles, onOpenDirectory, onSave, onRefresh, hasChanges, canRefresh, showFileList, onToggleFileList, showEditor, onToggleEditor, showPreview, onTogglePreview, showLogPanel, onToggleLogPanel }: ToolbarProps) {
+export default function Toolbar({ isLight, onToggleTheme, qmlControlStyle, onQmlControlStyleChange, onNew, onOpenFiles, onOpenDirectory, onSave, onRefresh, hasChanges, canRefresh, showFileList, onToggleFileList, showEditor, onToggleEditor, showPreview, onTogglePreview, showLogPanel, onToggleLogPanel }: ToolbarProps) {
   const { t, locale, toggleLocale } = useI18n()
 
   return (
@@ -57,6 +60,16 @@ export default function Toolbar({ isLight, onToggleTheme, onNew, onOpenFiles, on
         {showLogPanel ? <CaptionsOff size={18} /> : <Captions size={18} />}
       </button>
       <div className="toolbar-spacer" />
+      <label className="qml-style-picker" title={t('toolbar.controlStyle')}>
+        <Palette size={16} aria-hidden="true" />
+        <select
+          aria-label={t('toolbar.controlStyle')}
+          value={qmlControlStyle}
+          onChange={event => onQmlControlStyleChange(event.target.value as QmlControlStyle)}
+        >
+          {qmlControlStyles.map(style => <option key={style} value={style}>{style}</option>)}
+        </select>
+      </label>
       <button className="tool-btn" onClick={onToggleTheme} title={t('toolbar.theme')}>
         {isLight ? <Moon size={18} /> : <Sun size={18} />}
       </button>

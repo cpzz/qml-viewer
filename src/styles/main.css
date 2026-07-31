@@ -141,6 +141,33 @@ body {
   border-color: transparent;
 }
 
+.qml-style-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 7px;
+  border: 1px solid var(--toolbar-btn-border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  background: var(--toolbar-btn-bg);
+}
+
+.qml-style-picker select {
+  width: 88px;
+  border: 0;
+  outline: 0;
+  color: inherit;
+  background: transparent;
+  font: 12px/1 "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.qml-style-picker option {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+
 .locale-label {
   font-size: 11px;
   font-weight: 600;
@@ -244,6 +271,770 @@ body {
   flex: 1;
   overflow: hidden;
   position: relative;
+}
+
+.qml-runtime-surface,
+.qml-runtime-surface[data-qml-style="fusion"] {
+  --qml-control-bg: #252526;
+  --qml-control-bg-hover: #323235;
+  --qml-control-border: #55555b;
+  --qml-control-text: #e8e8e8;
+  --qml-muted-text: #a6a6a6;
+  --qml-accent: #3794ff;
+  --qml-accent-hover: #4aa0ff;
+  --qml-on-accent: #101010;
+  --qml-panel-bg: #202022;
+  --qml-panel-muted-bg: #2a2a2d;
+  --qml-progress-bg: #45454a;
+  --qml-shadow: rgb(0 0 0 / 45%);
+  --qml-control-radius: 3px;
+  --qml-container-radius: 4px;
+  --qml-control-shadow: inset 0 1px rgb(255 255 255 / 5%);
+  --qml-control-height: 30px;
+  --qml-focus-width: 1px;
+  --qml-font-family: "Segoe UI", Ubuntu, sans-serif;
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.qml-runtime-surface[data-qml-style="universal"] {
+  --qml-control-bg: #292929;
+  --qml-control-bg-hover: #3b3b3b;
+  --qml-control-border: #767676;
+  --qml-accent: #60cdff;
+  --qml-accent-hover: #76d5ff;
+  --qml-panel-bg: #202020;
+  --qml-panel-muted-bg: #282828;
+  --qml-control-radius: 2px;
+  --qml-container-radius: 2px;
+  --qml-control-shadow: none;
+  --qml-control-height: 32px;
+  --qml-focus-width: 2px;
+}
+
+.qml-runtime-surface[data-qml-style="material"] {
+  --qml-control-bg: #303030;
+  --qml-control-bg-hover: #3d3d3d;
+  --qml-control-border: #5f6368;
+  --qml-accent: #90caf9;
+  --qml-accent-hover: #a8d5fa;
+  --qml-panel-bg: #212121;
+  --qml-panel-muted-bg: #2b2b2b;
+  --qml-control-radius: 4px;
+  --qml-container-radius: 4px;
+  --qml-control-shadow: 0 2px 3px rgb(0 0 0 / 32%);
+  --qml-control-height: 36px;
+  --qml-focus-width: 2px;
+  --qml-font-family: Roboto, "Noto Sans", sans-serif;
+}
+
+.preview-panel.light .qml-runtime-surface,
+.preview-panel.light .qml-runtime-surface[data-qml-style="fusion"] {
+  --qml-control-bg: #ffffff;
+  --qml-control-bg-hover: #f0f2f5;
+  --qml-control-border: #aeb5bf;
+  --qml-control-text: #20242b;
+  --qml-muted-text: #66707d;
+  --qml-accent: #2878c8;
+  --qml-accent-hover: #1f68b0;
+  --qml-on-accent: #ffffff;
+  --qml-panel-bg: #ffffff;
+  --qml-panel-muted-bg: #f5f6f8;
+  --qml-progress-bg: #dce2ea;
+  --qml-shadow: rgb(0 0 0 / 22%);
+}
+
+.preview-panel.light .qml-runtime-surface[data-qml-style="universal"] {
+  --qml-control-bg: #ffffff;
+  --qml-control-bg-hover: #e5e5e5;
+  --qml-control-border: #8a8a8a;
+  --qml-control-text: #1a1a1a;
+  --qml-muted-text: #616161;
+  --qml-accent: #0067c0;
+  --qml-accent-hover: #005a9e;
+  --qml-panel-bg: #f3f3f3;
+  --qml-panel-muted-bg: #fafafa;
+  --qml-progress-bg: #d0d0d0;
+}
+
+.preview-panel.light .qml-runtime-surface[data-qml-style="material"] {
+  --qml-control-bg: #ffffff;
+  --qml-control-bg-hover: #f5f5f5;
+  --qml-control-border: #b0b0b0;
+  --qml-control-text: #212121;
+  --qml-muted-text: #616161;
+  --qml-accent: #1976d2;
+  --qml-accent-hover: #1565c0;
+  --qml-panel-bg: #fafafa;
+  --qml-panel-muted-bg: #ffffff;
+  --qml-progress-bg: #d7e7f7;
+  --qml-shadow: rgb(0 0 0 / 24%);
+  --qml-control-shadow: 0 2px 4px rgb(0 0 0 / 20%);
+}
+
+.qml-runtime-root [data-qml-type="ApplicationWindow"] {
+  color: var(--qml-control-text);
+  font-family: var(--qml-font-family);
+  font-size: 14px;
+}
+
+.qml-runtime-root :is(button, input, select, textarea) {
+  font-family: var(--qml-font-family);
+  font-size: 14px;
+}
+
+.qml-runtime-root [data-qml-type="Label"] {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qml-runtime-root .qml-menu-command {
+  min-width: 48px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--qml-control-text);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.qml-runtime-root .qml-menu-command:hover {
+  background: var(--qml-control-bg-hover);
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="Button"],
+  [data-qml-type="RoundButton"],
+  [data-qml-type="ToolButton"],
+  [data-qml-type="DelayButton"],
+  [data-qml-type="ItemDelegate"],
+  [data-qml-type="TabButton"]
+) {
+  min-height: var(--qml-control-height);
+  padding: 4px 12px;
+  border: 1px solid var(--qml-control-border);
+  border-radius: var(--qml-control-radius);
+  color: var(--qml-control-text);
+  background: var(--qml-control-bg);
+  box-shadow: var(--qml-control-shadow);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="Button"],
+  [data-qml-type="RoundButton"],
+  [data-qml-type="ToolButton"],
+  [data-qml-type="DelayButton"],
+  [data-qml-type="ItemDelegate"],
+  [data-qml-type="TabButton"]
+):hover {
+  border-color: var(--qml-accent);
+  background: var(--qml-control-bg-hover);
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="Button"],
+  [data-qml-type="RoundButton"],
+  [data-qml-type="ToolButton"],
+  [data-qml-type="DelayButton"],
+  [data-qml-type="ItemDelegate"],
+  [data-qml-type="TabButton"]
+):active {
+  filter: brightness(0.88);
+  transform: translateY(1px);
+}
+
+.qml-runtime-root :is(button, input, select, textarea):focus-visible {
+  outline: var(--qml-focus-width) solid var(--qml-accent);
+  outline-offset: 2px;
+}
+
+.qml-runtime-root :is(button, input, select, textarea):disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root :is(
+  [data-qml-type="Button"],
+  [data-qml-type="DelayButton"],
+  [data-qml-type="TabButton"]
+) {
+  border-color: transparent;
+  color: var(--qml-on-accent);
+  background: var(--qml-accent);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root :is(
+  [data-qml-type="Button"],
+  [data-qml-type="DelayButton"],
+  [data-qml-type="TabButton"]
+):hover {
+  border-color: transparent;
+  background: var(--qml-accent-hover);
+}
+
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root [data-qml-type="DelayButton"][aria-pressed="true"] {
+  background: var(--qml-accent-hover);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--qml-on-accent) 30%, transparent);
+}
+
+.qml-runtime-root [data-qml-type="DelayButton"] {
+  transition: border-color 180ms, box-shadow 180ms;
+}
+
+.qml-runtime-root [data-qml-type="DelayButton"][aria-pressed="true"] {
+  border-color: var(--qml-accent);
+  background: color-mix(in srgb, var(--qml-accent) 25%, var(--qml-control-bg));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--qml-accent) 40%, transparent);
+}
+
+.qml-runtime-root [data-qml-type="RoundButton"] {
+  aspect-ratio: 1;
+  padding: 0;
+}
+
+.qml-runtime-root .qml-tool-button {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="TextField"],
+  [data-qml-type="TextInput"],
+  [data-qml-type="TextArea"],
+  [data-qml-type="TextEdit"],
+  [data-qml-type="SpinBox"],
+  [data-qml-type="ComboBox"],
+  [data-qml-type="Tumbler"]
+) {
+  padding: 5px 8px;
+  border: 1px solid var(--qml-control-border);
+  border-radius: var(--qml-control-radius);
+  color: var(--qml-control-text);
+  background: var(--qml-control-bg);
+  font: inherit;
+}
+
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root :is(
+  [data-qml-type="TextField"],
+  [data-qml-type="TextInput"],
+  [data-qml-type="TextArea"],
+  [data-qml-type="TextEdit"],
+  [data-qml-type="SpinBox"],
+  [data-qml-type="ComboBox"]
+) {
+  border-width: 0 0 1px;
+  border-radius: 0;
+  box-shadow: none;
+  background: color-mix(in srgb, var(--qml-control-bg) 65%, transparent);
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="TextField"],
+  [data-qml-type="TextInput"],
+  [data-qml-type="TextArea"],
+  [data-qml-type="TextEdit"],
+  [data-qml-type="SpinBox"],
+  [data-qml-type="ComboBox"]
+):focus {
+  border-color: var(--qml-accent);
+  outline: 2px solid color-mix(in srgb, var(--qml-accent) 22%, transparent);
+  outline-offset: 0;
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="CheckBox"],
+  [data-qml-type="RadioButton"],
+  [data-qml-type="Switch"]
+) {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: max-content;
+  min-height: 24px;
+  color: var(--qml-control-text);
+  cursor: pointer;
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="CheckBox"],
+  [data-qml-type="RadioButton"],
+  [data-qml-type="Switch"]
+) > input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--qml-accent);
+}
+
+.qml-runtime-root .qml-switch-control > .qml-check-input {
+  position: relative;
+  width: 38px;
+  height: 20px;
+  flex: 0 0 38px;
+  appearance: none;
+  border: 1px solid var(--qml-control-border);
+  border-radius: 10px;
+  background: var(--qml-progress-bg);
+  transition: background 120ms, border-color 120ms;
+}
+
+.qml-runtime-root .qml-switch-control > .qml-check-input::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--qml-muted-text);
+  transition: transform 120ms, background 120ms;
+}
+
+.qml-runtime-root .qml-switch-control > .qml-check-input:checked {
+  border-color: var(--qml-accent);
+  background: var(--qml-accent);
+}
+
+.qml-runtime-root .qml-switch-control > .qml-check-input:checked::before {
+  background: var(--qml-panel-bg);
+  transform: translateX(18px);
+}
+
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root .qml-switch-control > .qml-check-input {
+  height: 14px;
+  border: 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--qml-muted-text) 45%, transparent);
+}
+
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root .qml-switch-control > .qml-check-input::before {
+  top: -3px;
+  left: 0;
+  width: 20px;
+  height: 20px;
+  box-shadow: 0 1px 3px var(--qml-shadow);
+  background: var(--qml-muted-text);
+}
+
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root .qml-switch-control > .qml-check-input:checked {
+  background: color-mix(in srgb, var(--qml-accent) 45%, transparent);
+}
+
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root .qml-switch-control > .qml-check-input:checked::before {
+  background: var(--qml-accent);
+}
+
+.qml-runtime-root [data-qml-type="GroupBox"] {
+  padding: 12px;
+  border: 1px solid var(--qml-control-border);
+  border-radius: var(--qml-container-radius);
+  background: var(--qml-panel-muted-bg);
+}
+
+.qml-runtime-root [data-qml-type="GroupBox"] > legend {
+  padding: 0 6px;
+  color: var(--qml-control-text);
+  font-weight: 600;
+}
+
+.qml-runtime-root [data-qml-type="ProgressBar"] {
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: var(--qml-progress-bg);
+  accent-color: var(--qml-accent);
+}
+
+.qml-runtime-root [data-qml-type="BusyIndicator"] {
+  border: 3px solid var(--qml-progress-bg);
+  border-top-color: var(--qml-accent);
+  border-radius: 50%;
+  animation: qml-runtime-spin 0.8s linear infinite;
+}
+
+.qml-runtime-root :is([data-qml-type="Slider"], .qml-range-input) {
+  height: 20px;
+  padding: 0;
+  accent-color: var(--qml-accent);
+}
+
+.qml-runtime-root [data-qml-type="RangeSlider"] {
+  position: relative;
+  display: grid;
+  align-content: center;
+  min-height: 24px;
+}
+
+.qml-runtime-root .qml-range-track {
+  grid-area: 1 / 1;
+  position: relative;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--qml-progress-bg);
+  margin: 0 8px;
+  align-self: center;
+  cursor: pointer;
+}
+
+.qml-runtime-root .qml-range-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  left: var(--qml-range-first);
+  width: calc(var(--qml-range-second) - var(--qml-range-first));
+  border-radius: inherit;
+  background: var(--qml-accent);
+  pointer-events: none;
+}
+
+.qml-runtime-root .qml-range-handle {
+  position: absolute;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--qml-accent);
+  border-radius: 50%;
+  background: var(--qml-panel-bg);
+  transform: translate(-50%, -50%);
+  cursor: grab;
+}
+
+.qml-runtime-root .qml-range-handle:active {
+  cursor: grabbing;
+}
+
+.qml-runtime-root .qml-range-handle[data-range-handle="first"] {
+  left: var(--qml-range-first);
+}
+
+.qml-runtime-root .qml-range-handle[data-range-handle="second"] {
+  left: var(--qml-range-second);
+}
+
+.qml-runtime-root .qml-slider-track {
+  position: absolute;
+  inset: 50% 8px auto;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--qml-progress-bg);
+  transform: translateY(-50%);
+}
+
+.qml-runtime-root .qml-slider-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--qml-position-percent);
+  border-radius: inherit;
+  background: var(--qml-accent);
+}
+
+.qml-runtime-root .qml-slider-handle {
+  position: absolute;
+  top: 50%;
+  left: var(--qml-position-percent);
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--qml-accent);
+  border-radius: 50%;
+  background: var(--qml-panel-bg);
+  transform: translate(-50%, -50%);
+}
+
+.qml-runtime-root .qml-dial-control {
+  min-width: 52px;
+  min-height: 52px;
+  padding: 12px;
+  appearance: none;
+  border: 2px solid var(--qml-control-border);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle, var(--qml-control-bg) 0 54%, transparent 56%),
+    conic-gradient(
+      from 225deg,
+      var(--qml-accent) 0deg calc(var(--qml-dial-angle) + 135deg),
+      var(--qml-progress-bg) calc(var(--qml-dial-angle) + 135deg) 270deg,
+      transparent 270deg 360deg
+    );
+  accent-color: var(--qml-accent);
+}
+
+.qml-runtime-root :is(.qml-slider-control, .qml-dial-control) > .qml-range-native {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.qml-runtime-root .qml-dial-face {
+  position: absolute;
+  inset: 9px;
+  border-radius: 50%;
+}
+
+.qml-runtime-root .qml-dial-needle {
+  position: absolute;
+  left: calc(50% - 1px);
+  bottom: 50%;
+  width: 2px;
+  height: 38%;
+  border-radius: 1px;
+  background: var(--qml-accent);
+  transform: rotate(var(--qml-dial-angle));
+  transform-origin: 50% 100%;
+}
+
+.qml-runtime-root .qml-dial-control::-webkit-slider-runnable-track {
+  background: transparent;
+}
+
+.qml-runtime-root .qml-dial-control::-webkit-slider-thumb {
+  appearance: none;
+  opacity: 0;
+}
+
+.qml-runtime-root .qml-tumbler-control {
+  display: grid;
+  grid-template-rows: repeat(3, 24px);
+  overflow: hidden;
+  text-align: center;
+  border-block: 1px solid var(--qml-accent);
+}
+
+.qml-runtime-root .qml-tumbler-item {
+  border: 0;
+  color: var(--qml-muted-text);
+  background: transparent;
+}
+
+.qml-runtime-root .qml-tumbler-item[aria-selected="true"] {
+  color: var(--qml-control-text);
+  font-weight: 600;
+  background: var(--qml-control-bg-hover);
+}
+
+.qml-runtime-root [data-qml-type="ScrollIndicator"] {
+  min-height: 8px;
+  border-radius: 2px;
+  background: var(--qml-muted-text);
+}
+
+.qml-runtime-root [data-qml-type="BusyIndicator"][aria-busy="false"] {
+  animation: none;
+}
+
+.qml-runtime-root [data-qml-type="TabButton"][aria-selected="true"] {
+  border-color: var(--qml-accent);
+  color: var(--qml-accent);
+  box-shadow: inset 0 -2px var(--qml-accent);
+}
+
+.qml-runtime-root [data-qml-type="TableView"] > [role="columnheader"],
+.qml-runtime-root [data-qml-type="TableView"] > [role="gridcell"] {
+  min-width: 0;
+  padding: 7px 9px;
+  overflow: hidden;
+  border-right: 1px solid var(--qml-control-border);
+  border-bottom: 1px solid var(--qml-control-border);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qml-runtime-root [data-qml-type="TableView"] {
+  border: 1px solid var(--qml-control-border);
+  background: var(--qml-panel-bg);
+}
+
+.qml-runtime-root [data-qml-type="TableView"] > [role="gridcell"][aria-selected="true"],
+.qml-runtime-root [data-qml-type="TreeView"] > [role="treeitem"][aria-selected="true"] {
+  color: var(--qml-on-accent);
+  background: var(--qml-accent);
+}
+
+.qml-runtime-root [data-qml-type="TableView"] > [role="columnheader"] {
+  background: var(--qml-panel-muted-bg);
+  font-weight: 600;
+}
+
+.qml-runtime-root [data-qml-type="TreeView"] > [role="treeitem"] {
+  min-height: 26px;
+  padding-block: 4px;
+  border-radius: 3px;
+}
+
+.qml-runtime-root [data-qml-type="TreeView"] > [role="treeitem"]:hover {
+  color: var(--qml-control-text);
+  background: var(--qml-control-bg-hover);
+}
+
+.qml-runtime-root [data-qml-type="TreeView"] > [role="treeitem"][aria-selected="true"]:hover {
+  color: var(--qml-on-accent);
+  background: var(--qml-accent-hover);
+}
+
+.qml-runtime-root :is([data-qml-type="ListView"], [data-qml-type="GridView"]) > [data-qml-type="ItemDelegate"][aria-selected="true"] {
+  color: var(--qml-on-accent);
+  background: var(--qml-accent);
+}
+
+.qml-runtime-root :is([data-qml-type="Popup"], [data-qml-type="Dialog"], [data-qml-type="Drawer"], [data-qml-type="Menu"]) {
+  padding: 12px;
+  border: 1px solid var(--qml-control-border);
+  border-radius: var(--qml-container-radius);
+  color: var(--qml-control-text);
+  background: var(--qml-panel-bg);
+  box-shadow: 0 10px 30px var(--qml-shadow);
+}
+
+.qml-runtime-root [data-qml-type="Calendar"] {
+  display: grid;
+  gap: 8px;
+  min-width: 252px;
+  padding: 10px;
+  border: 1px solid var(--qml-control-border);
+  border-radius: var(--qml-container-radius);
+  color: var(--qml-control-text);
+  background: var(--qml-panel-bg);
+}
+
+.qml-runtime-root .qml-calendar-header,
+.qml-runtime-root .qml-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  align-items: center;
+  gap: 2px;
+}
+
+.qml-runtime-root .qml-calendar-header {
+  grid-template-columns: 30px 1fr 30px;
+}
+
+.qml-runtime-root .qml-calendar-title {
+  text-align: center;
+}
+
+.qml-runtime-root :is(.qml-calendar-nav, .qml-calendar-day) {
+  min-width: 28px;
+  min-height: 28px;
+  border: 0;
+  border-radius: var(--qml-control-radius);
+  color: var(--qml-control-text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.qml-runtime-root :is(.qml-calendar-nav, .qml-calendar-day):hover {
+  background: var(--qml-control-bg-hover);
+}
+
+.qml-runtime-root .qml-calendar-day[aria-selected="true"] {
+  color: var(--qml-panel-bg);
+  background: var(--qml-accent);
+}
+
+.qml-runtime-root .qml-calendar-weekday {
+  color: var(--qml-muted-text);
+  font-size: 11px;
+  text-align: center;
+}
+
+@keyframes qml-runtime-spin {
+  to { transform: rotate(360deg); }
+}
+
+.preview-inspector-toggle {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  cursor: pointer;
+}
+
+.preview-inspector-toggle:hover {
+  background: var(--hover-bg);
+}
+
+.preview-inspector {
+  position: absolute;
+  inset: 46px 8px 8px auto;
+  z-index: 4;
+  width: min(420px, calc(100% - 16px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 24%);
+}
+
+.preview-inspector header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+}
+
+.preview-inspector pre {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  font: 12px/1.5 "SFMono-Regular", Consolas, monospace;
+  white-space: pre;
+}
+
+@media (max-width: 600px) {
+  .preview-inspector-toggle {
+    position: fixed;
+    top: 52px;
+    right: 8px;
+  }
+
+  .preview-inspector {
+    position: fixed;
+    inset: 90px 8px 8px;
+    width: auto;
+  }
+}
+
+.preview-error {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: auto;
+  padding: 16px;
+  color: #e74c3c;
+  background: var(--bg-primary);
+  font-family: monospace;
+  font-size: 13px;
+  white-space: pre-wrap;
 }
 
 .preview-iframe {

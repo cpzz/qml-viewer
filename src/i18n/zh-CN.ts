@@ -15,6 +15,7 @@ export default {
     save: '保存文件',
     refresh: '刷新',
     theme: '切换明亮/暗色模式',
+    controlStyle: 'QML 控件风格',
     language: 'Swith to English',
   },
   fileExplorer: {
