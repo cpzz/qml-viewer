@@ -200,6 +200,18 @@ function colorValueItems(range: monaco.Range): monaco.languages.CompletionItem[]
   }))
 }
 
+function declaredPropertyKind(typeName?: string): QmlPropertyDefinition['kind'] | undefined {
+  const normalized = typeName?.toLowerCase()
+  if (!normalized) return undefined
+  if (['int', 'real', 'double', 'float'].includes(normalized)) return 'number'
+  if (normalized === 'bool') return 'boolean'
+  if (normalized === 'string' || normalized === 'color' || normalized === 'url' || normalized === 'date') {
+    return normalized
+  }
+  if (normalized === 'list' || normalized.startsWith('list<')) return 'array'
+  return undefined
+}
+
 function literalItem(
   label: string,
   insertText: string,
@@ -513,21 +525,26 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
         return { suggestions: idType ? memberItems(idType, range) : [] }
       }
 
+      const declaredValueMatch = linePrefix.match(
+        /^\s*(?:(?:readonly|required|default)\s+)?property\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+([A-Za-z_]\w*)\s*:\s*(.*)$/,
+      )
       const valueMatch = linePrefix.match(/^\s*([A-Za-z_][A-Za-z0-9_.]*)\s*:\s*(.*)$/)
-      if (valueMatch) {
-        const propertyName = valueMatch[1]
+      if (declaredValueMatch || valueMatch) {
+        const propertyName = declaredValueMatch?.[2] ?? valueMatch![1]
+        const declaredType = declaredValueMatch?.[1] ?? context.declaredProperties.get(propertyName)
         const definition = context.currentType ? qmlTypeMap.get(context.currentType) : undefined
         const propertyDefinition = definition?.properties.find(item => item.name === propertyName)
+        const propertyKind = propertyDefinition?.kind ?? declaredPropertyKind(declaredType)
         const suggestions: monaco.languages.CompletionItem[] = []
-        if (propertyDefinition?.kind === 'string') suggestions.push(literalItem('empty string', '""', 'QML string value', range, monaco.languages.CompletionItemKind.Text))
-        if (propertyDefinition?.kind === 'url') suggestions.push(literalItem('empty URL', '""', 'QML URL value', range, monaco.languages.CompletionItemKind.File))
-        if (propertyDefinition?.kind === 'number') suggestions.push(literalItem('0', '0', 'QML numeric value', range, monaco.languages.CompletionItemKind.Value))
-        if (propertyDefinition?.kind === 'boolean') suggestions.push(
+        if (propertyKind === 'string') suggestions.push(literalItem('empty string', '""', 'QML string value', range, monaco.languages.CompletionItemKind.Text))
+        if (propertyKind === 'url') suggestions.push(literalItem('empty URL', '""', 'QML URL value', range, monaco.languages.CompletionItemKind.File))
+        if (propertyKind === 'number') suggestions.push(literalItem('0', '0', 'QML numeric value', range, monaco.languages.CompletionItemKind.Value))
+        if (propertyKind === 'boolean') suggestions.push(
           literalItem('true', 'true', 'QML boolean value', range, monaco.languages.CompletionItemKind.Keyword),
           literalItem('false', 'false', 'QML boolean value', range, monaco.languages.CompletionItemKind.Keyword),
         )
         if (propertyDefinition?.kind === 'enum' && propertyDefinition.values) suggestions.push(...valueItems(propertyDefinition.values, range))
-        if (propertyDefinition?.kind === 'array') suggestions.push(literalItem('empty array', '[]', 'QML array value', range, monaco.languages.CompletionItemKind.Value))
+        if (propertyKind === 'array') suggestions.push(literalItem('empty array', '[]', 'QML array value', range, monaco.languages.CompletionItemKind.Value))
         if (propertyDefinition?.kind === 'model') {
           suggestions.push(
             literalItem('empty model', '[]', 'QML array model', range, monaco.languages.CompletionItemKind.Value),
@@ -544,7 +561,7 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
             range,
           ))
         }
-        if (propertyDefinition?.kind === 'date') suggestions.push(literalItem('new Date()', 'new Date()', 'QML date value', range, monaco.languages.CompletionItemKind.Constructor))
+        if (propertyKind === 'date') suggestions.push(literalItem('new Date()', 'new Date()', 'QML date value', range, monaco.languages.CompletionItemKind.Constructor))
         if (propertyDefinition?.kind === 'time') suggestions.push(literalItem('12:00:00', '"12:00:00"', 'QML time value', range, monaco.languages.CompletionItemKind.Value))
         if (propertyDefinition?.kind === 'handler') suggestions.push({
           ...literalItem('handler block', '{\n\t$0\n}', 'QML signal handler block', range, monaco.languages.CompletionItemKind.Snippet),
@@ -553,7 +570,7 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
         if (propertyName.startsWith('anchors.') || propertyName === 'target' || propertyName.endsWith('Component')) {
           suggestions.push(...referenceItems(['parent', ...context.ids.keys()], range))
         }
-        if (propertyDefinition?.kind === 'color') {
+        if (propertyKind === 'color') {
           suggestions.push(...colorValueItems(range))
         }
         // Always offer local symbols (ids, declared properties, functions) as candidates

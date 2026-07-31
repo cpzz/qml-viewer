@@ -25,30 +25,6 @@ interface EditorPanelProps {
   readOnly: boolean
 }
 
-const PROPERTY_DEFAULT_VALUES: Record<string, { text: string; cursorBack: number }> = {
-  int:    { text: '0',             cursorBack: 0 },
-  real:   { text: '0.0',           cursorBack: 0 },
-  double: { text: '0.0',           cursorBack: 0 },
-  bool:   { text: 'false',         cursorBack: 0 },
-  string: { text: '""',            cursorBack: 1 },
-  color:  { text: '"transparent"', cursorBack: 0 },
-  url:    { text: '""',            cursorBack: 1 },
-  list:   { text: '[]',            cursorBack: 0 },
-  date:   { text: 'new Date()',    cursorBack: 0 },
-}
-
-function getPropertyDefaultValue(
-  model: monaco.editor.ITextModel,
-  position: monaco.Position,
-): { text: string; cursorBack: number } | null {
-  const linePrefix = model.getLineContent(position.lineNumber).slice(0, position.column - 1)
-  const match = linePrefix.match(
-    /^\s*(?:(?:readonly|default)\s+)?property\s+([A-Za-z_]\w*)\s+[A-Za-z_]\w*\s*:$/,
-  )
-  if (!match) return null
-  return PROPERTY_DEFAULT_VALUES[match[1].toLowerCase()] ?? null
-}
-
 function isQmlPropertyColon(model: monaco.editor.ITextModel, position: monaco.Position): boolean {
   const colonOffset = model.getOffsetAt(position) - 1
   const source = model.getValue().slice(0, colonOffset + 1)
@@ -122,6 +98,7 @@ export default function EditorPanel({ code, onChange, isLight, readOnly }: Edito
       suggestOnTriggerCharacters: true,
       tabCompletion: 'on',
       snippetSuggestions: 'top',
+      fixedOverflowWidgets: true,
       scrollBeyondLastLine: false,
       wordWrap: 'on',
       find: {
@@ -157,8 +134,6 @@ export default function EditorPanel({ code, onChange, isLight, readOnly }: Edito
         position.column + 1,
       ))
       if (/\s/.test(nextCharacter)) return
-      const defaultVal = getPropertyDefaultValue(model, position)
-      const insertText = defaultVal ? ` ${defaultVal.text}` : ' '
       editor.executeEdits('qml-colon-spacing', [{
         range: new monaco.Range(
           position.lineNumber,
@@ -166,10 +141,10 @@ export default function EditorPanel({ code, onChange, isLight, readOnly }: Edito
           position.lineNumber,
           position.column,
         ),
-        text: insertText,
+        text: ' ',
       }])
-      const newColumn = position.column + insertText.length - (defaultVal?.cursorBack ?? 0)
-      editor.setPosition({ lineNumber: position.lineNumber, column: newColumn })
+      editor.setPosition({ lineNumber: position.lineNumber, column: position.column + 1 })
+      editor.trigger('qml-colon-spacing', 'editor.action.triggerSuggest', {})
     })
 
     const updateFindWidget = () => {

@@ -12,6 +12,8 @@ interface PreviewFrame {
   isLight: boolean
 }
 
+const PREVIEW_UPDATE_DELAY_MS = 200
+
 function attachConsoleBridge(html: string): string {
   const bridge = `<script>(function(){
     const toText = function(value){
@@ -100,14 +102,14 @@ export default function PreviewPanel({ code, isLight }: PreviewPanelProps) {
         const message = renderError instanceof Error ? renderError.message : String(renderError)
         setError(message)
       }
-    }, themeChanged ? 0 : 120)
+    }, themeChanged ? 0 : PREVIEW_UPDATE_DELAY_MS)
 
     return () => window.clearTimeout(timer)
   }, [code, isLight])
 
   const handleFrameLoad = (slot: number, version: number) => {
     const pending = pendingRef.current
-    if (!pending || pending.slot !== slot || pending.version !== version) return
+    if (!pending || pending.slot !== slot || pending.version !== version || version !== versionRef.current) return
 
     const doc = iframeRefs.current[slot]?.contentDocument
     const outer = doc?.querySelector<HTMLElement>('.qml-preview-root')

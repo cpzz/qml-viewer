@@ -235,6 +235,7 @@ export const qmlSyntaxSnippets: Array<{ label: string; insertText: string; comma
   { label: 'property', insertText: 'property ', command: { id: 'editor.action.triggerSuggest', title: 'Suggest property type' } },
   { label: 'readonly property', insertText: 'readonly property ', command: { id: 'editor.action.triggerSuggest', title: 'Suggest property type' } },
   { label: 'required property', insertText: 'required property ', command: { id: 'editor.action.triggerSuggest', title: 'Suggest property type' } },
+  { label: 'default property', insertText: 'default property ', command: { id: 'editor.action.triggerSuggest', title: 'Suggest property type' } },
   { label: 'signal', insertText: 'signal ${1:name}(${2})' },
   { label: 'function', insertText: 'function ${1:name}(${2}) {\n\t$0\n}' },
   { label: 'component', insertText: 'component ${1:Name}: ${2:Item} {\n\t$0\n}' },

@@ -254,8 +254,6 @@ body {
   border: none;
   background: var(--bg-primary);
   display: block;
-  transition: opacity 100ms ease-out;
-  will-change: opacity;
 }
 
 .preview-iframe-active {
