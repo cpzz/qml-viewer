@@ -741,11 +741,25 @@ export class QmlDomSceneGraph {
     if (object.typeName === 'TreeView') this.projectTreeView(object, element)
     if (object.typeName === 'HorizontalHeaderView' || object.typeName === 'VerticalHeaderView') {
       const syncView = object.getProperty('syncView')
+      let headers: string[] = []
       if (syncView instanceof QmlObject) {
-        const headers = syncView.getProperty('headers')
-        element.textContent = Array.isArray(headers) ? headers.map(cssValue).join(object.typeName === 'VerticalHeaderView' ? '\n' : ' | ') : ''
-        style.whiteSpace = 'pre'
+        const h = syncView.getProperty('headers')
+        if (Array.isArray(h) && h.length) headers = h.map(cssValue)
       }
+      if (!headers.length) {
+        headers = orderedVisualChildren(object).filter(c => c.typeName === 'Label').map(c => cssValue(c.getProperty('text')))
+      }
+      if (headers.length) {
+        const cells = headers.map((label, index) => {
+          const cell = this.domDocument.createElement('div')
+          cell.setAttribute('role', 'columnheader')
+          cell.dataset.columnIndex = String(index)
+          cell.textContent = label
+          return cell
+        })
+        element.replaceChildren(...cells)
+      }
+      style.whiteSpace = 'pre'
     }
     if (element instanceof this.domDocument.defaultView!.HTMLSelectElement && object.typeName === 'ComboBox') {
       const model = object.getProperty('model')

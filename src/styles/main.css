@@ -874,8 +874,17 @@ body {
   border: 1px solid var(--qml-control-border);
   border-bottom: 2px solid var(--qml-accent);
   background: var(--qml-panel-muted-bg);
+}
+
+.qml-runtime-root [data-qml-type="HorizontalHeaderView"] > [role="columnheader"] {
+  flex: 1;
+  padding: 2px 6px;
   font-weight: 600;
-  gap: 0;
+  border-right: 1px solid var(--qml-control-border);
+}
+
+.qml-runtime-root [data-qml-type="HorizontalHeaderView"] > [role="columnheader"]:last-child {
+  border-right: none;
 }
 
 .qml-runtime-root [data-qml-type="TreeView"] > [role="treeitem"] {
