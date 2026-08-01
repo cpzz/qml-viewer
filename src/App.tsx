@@ -1,8 +1,9 @@
-import React, { useState, useCallback, useEffect, useRef, Suspense, lazy } from 'react'
+import React, { useState, useCallback, useEffect, useRef, Suspense } from 'react'
 import Toolbar from './components/Toolbar'
 import SplitPane from './components/SplitPane'
 import PreviewPanel from './components/PreviewPanel'
 import FileExplorer from './components/FileExplorer'
+import EditorPanel from './components/EditorPanel'
 import { Trash2 } from 'lucide-react'
 import { useI18n } from './i18n'
 import type { FileTab } from './components/FileList'
@@ -49,8 +50,6 @@ function formatLogTimestamp(timestamp: number): string {
 let _tabId = 1
 function nextId(): string { return 'tab-' + (_tabId++) }
 
-const EditorPanel = lazy(() => import('./components/EditorPanel'))
-
 export default function App() {
   const { t } = useI18n()
   const [files, setFiles] = useState<FileTab[]>([])
@@ -72,6 +71,8 @@ export default function App() {
   const [editorRevision, setEditorRevision] = useState(0)
   const [previewLogs, setPreviewLogs] = useState<PreviewLogEntry[]>([])
   const previewStackRef = useRef<HTMLDivElement>(null)
+  const logListRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<any>(null)
   const [fileItems, setFileItems] = useState<FileItem[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
   const filesRef = useRef(files)
@@ -746,6 +747,10 @@ export default function App() {
     setShowLogPanel((prev) => !prev)
   }, [])
 
+  const handleFormat = useCallback(() => {
+    editorRef.current?.format()
+  }, [])
+
   const handleClearPreviewLogs = useCallback(() => {
     setPreviewLogs([])
   }, [])
@@ -781,6 +786,12 @@ export default function App() {
     setPreviewLogs([])
   }, [activeId])
 
+  // Auto-scroll the log list to the latest entry
+  useEffect(() => {
+    const el = logListRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [previewLogs])
+
   useEffect(() => {
     document.documentElement.classList.toggle('light', isLight)
   }, [isLight])
@@ -801,6 +812,7 @@ export default function App() {
         onOpenDirectory={handleOpenDirectory}
         onSave={handleSave}
         onRefresh={handleRefresh}
+        onFormat={handleFormat}
         hasChanges={hasChanges}
         canRefresh={canRefresh}
         showFileList={showFileList}
@@ -835,7 +847,7 @@ export default function App() {
           showRight={showPreview}
           left={
             <Suspense fallback={<div className="editor-panel"><div className="editor-container" /></div>}>
-              <EditorPanel key={editorRevision} code={code} onChange={handleCodeChange} isLight={isLight} readOnly={!activeTab} />
+              <EditorPanel ref={editorRef} key={editorRevision} code={code} onChange={handleCodeChange} isLight={isLight} readOnly={!activeTab} />
             </Suspense>
           }
           right={(
@@ -861,7 +873,7 @@ export default function App() {
                         <Trash2 size={13} />
                       </button>
                     </div>
-                    <div className="preview-log-list">
+                    <div className="preview-log-list" ref={logListRef}>
                       {previewLogs.length === 0 ? (
                         <div className="preview-log-empty">{t('logPanel.empty')}</div>
                       ) : previewLogs.map((entry) => {

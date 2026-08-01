@@ -52,7 +52,7 @@ describe('QML runtime acceptance fixture', () => {
     expect(active.ids.get('root')?.getProperty('count')).toBe(2)
     expect(active.ids.get('label')?.getProperty('text')).toBe('Count 2')
     expect(scene.getElement(active.ids.get('panel')!)?.style.left).toBe('40px')
-    expect(scene.getElement(active.ids.get('panel')!)?.style.backgroundColor).toBe('blue')
+    expect(scene.getElement(active.ids.get('panel')!)?.style.backgroundColor).toBe('#0000ff')
     expect(scene.getElement(active.ids.get('canvas')!)?.tagName).toBe('CANVAS')
 
     scene.dispose()

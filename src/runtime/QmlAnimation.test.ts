@@ -9,6 +9,7 @@ import {
   QmlScriptAction,
   QmlSequentialAnimation,
   QmlValueAnimation,
+  resolveQmlEasing,
   type QmlAnimation,
   type QmlAnimationScheduler,
 } from './QmlAnimation'
@@ -33,6 +34,27 @@ class ManualScheduler implements QmlAnimationScheduler {
     callbacks.forEach(callback => callback(this.time))
   }
 }
+
+describe('resolveQmlEasing', () => {
+  it('maps QEasingCurve::Type indexes and Easing.X names to easing functions', () => {
+    expect(resolveQmlEasing(2)).toBe(QmlEasing.OutQuad)
+    expect(resolveQmlEasing(34)).toBe(QmlEasing.OutBack)
+    expect(resolveQmlEasing('Easing.InOutBounce')).toBe(QmlEasing.InOutBounce)
+    expect(resolveQmlEasing(undefined)).toBe(QmlEasing.Linear)
+    // 未知值回退到 Linear
+    expect(resolveQmlEasing('Easing.Unknown')).toBe(QmlEasing.Linear)
+    expect(resolveQmlEasing(999)).toBe(QmlEasing.Linear)
+  })
+
+  it('keeps curve endpoints at 0 and 1', () => {
+    expect(QmlEasing.OutBounce(0)).toBe(0)
+    expect(QmlEasing.OutBounce(1)).toBe(1)
+    expect(QmlEasing.InOutBack(0)).toBe(0)
+    expect(QmlEasing.InOutBack(1)).toBe(1)
+    expect(QmlEasing.InElastic(0)).toBeCloseTo(0, 2)
+    expect(QmlEasing.OutInExpo(1)).toBe(1)
+  })
+})
 
 function animatedObject() {
   const object = new QmlObject('Item')
@@ -143,6 +165,44 @@ describe('QML animation groups', () => {
     expect(object.getProperty('vector')).toEqual([5, 15, 25])
     scheduler.advance(50)
     await completed
+  })
+
+  it('interpolates named colors and short hex colors', async () => {
+    const scheduler = new ManualScheduler()
+    const object = animatedObject()
+    object.defineProperty({ name: 'color', type: 'color', initialValue: '#333' })
+    // #333(51,51,51) → "red"(255,0,0)，t=0.5 → #991a1a
+    const named = new QmlValueAnimation({ target: object, property: 'color', to: 'red', duration: 100, scheduler })
+    const completedNamed = named.start()
+    scheduler.advance(50)
+    expect(object.getProperty('color')).toBe('#991a1a')
+    scheduler.advance(50)
+    await completedNamed
+    expect(object.getProperty('color')).toBe('#ff0000')
+
+    // #ff0000 → "#fff"(255,255,255)，t=0.5 → #ff8080
+    const shortHex = new QmlValueAnimation({ target: object, property: 'color', to: '#fff', duration: 100, scheduler })
+    const completedShort = shortHex.start()
+    scheduler.advance(50)
+    expect(object.getProperty('color')).toBe('#ff8080')
+    scheduler.advance(50)
+    await completedShort
+    expect(object.getProperty('color')).toBe('#ffffff')
+  })
+
+  it('interpolates Qt ARGB colors with alpha in the highest byte', async () => {
+    const scheduler = new ManualScheduler()
+    const object = animatedObject()
+    object.defineProperty({ name: 'color', type: 'color', initialValue: '#000000' })
+    // '#80ff0000' 是 Qt 的 AARRGGBB 半透明红（alpha 0x80=128）
+    const animation = new QmlValueAnimation({ target: object, property: 'color', to: '#80ff0000', duration: 100, scheduler })
+    const completed = animation.start()
+    // t=0.5：r=(0+255)/2≈128，a=(255+128)/2≈192 → ARGB #c0ff0000
+    scheduler.advance(50)
+    expect(object.getProperty('color')).toBe('#c0ff0000')
+    scheduler.advance(50)
+    await completed
+    expect(object.getProperty('color')).toBe('#80ff0000')
   })
 
   it('runs pause, script, and finite loop actions', async () => {

@@ -19,6 +19,44 @@ describe('parseQML compatibility baseline', () => {
     expect(document.nodes[0].type).toBe('Item')
   })
 
+  it('parses Behavior on <property> as a Behavior child element', () => {
+    const [root] = parseQML(`
+      import QtQuick
+      Rectangle {
+        color: "#333"
+        Behavior on color { ColorAnimation { duration: 200 } }
+      }
+    `)
+    expect(root.type).toBe('Rectangle')
+    const behavior = root.children.find(child => child.type === 'Behavior')
+    expect(behavior).toBeTruthy()
+    expect(behavior?.behaviorOn).toBe('color')
+    const animation = behavior?.children.find(child => child.type === 'ColorAnimation')
+    expect(animation?.properties.duration).toBe('200')
+  })
+
+  it('parses transition block property on a DelayButton', () => {
+    const [root] = parseQML(`
+      import QtQuick.Controls
+      DelayButton {
+        delay: 2000
+        transition: Transition {
+          NumberAnimation {
+            property: "progress"
+            duration: 200
+            easing.type: Easing.Linear
+          }
+        }
+      }
+    `)
+    expect(root.type).toBe('DelayButton')
+    const transition = root.blockProperties?.transition
+    expect(transition?.type).toBe('Transition')
+    const animation = transition?.children.find(child => child.type === 'NumberAnimation')
+    expect(animation?.properties.duration).toBe('200')
+    expect(animation?.properties['easing.type']).toBe('Easing.Linear')
+  })
+
   it('parses imports, typed properties, expressions, and ids', () => {
     const [root] = parseQML(`
       import QtQuick
@@ -225,5 +263,43 @@ Item {
       { code: 'missing-property-value', range: { start: { line: 2, column: 8 } } },
     ])
     expect(template.diagnostics.map(diagnostic => diagnostic.code)).toContain('unterminated-template')
+  })
+
+  it('parses multi-line ternary expressions without swallowing following properties', () => {
+    const [checkBox] = parseQML(`
+      CheckBox {
+        text: "Third"
+        tristate: true
+        checkState: allChildrenChecked ? Qt.Checked :
+                    anyChildChecked ? Qt.PartiallyChecked : Qt.Unchecked
+        nextCheckState: function() {
+          if (checkState === Qt.Checked) return Qt.Unchecked
+          else return Qt.Checked
+        }
+        onClicked: { console.log("clicked") }
+        onPressed: { console.log("pressed") }
+        onToggled: { console.log("toggled") }
+      }
+    `)
+
+    expect(checkBox.properties.checkState).toBe(
+      'allChildrenChecked ? Qt.Checked :\n          anyChildChecked ? Qt.PartiallyChecked : Qt.Unchecked',
+    )
+    expect(checkBox.methods?.nextCheckState).toContain('return Qt.Unchecked')
+    expect(checkBox.properties.onClicked).toContain('console.log("clicked")')
+    expect(checkBox.properties.onPressed).toContain('console.log("pressed")')
+    expect(checkBox.properties.onToggled).toContain('console.log("toggled")')
+  })
+
+  it('parses single-line ternary followed by another property', () => {
+    const [rect] = parseQML(`
+      Rectangle {
+        width: visible ? 100 : 0
+        height: 200
+      }
+    `)
+
+    expect(rect.properties.width).toBe('visible ? 100 : 0')
+    expect(rect.properties.height).toBe('200')
   })
 })

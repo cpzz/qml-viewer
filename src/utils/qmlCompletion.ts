@@ -12,8 +12,19 @@ import {
   type QmlPropertyDefinition,
 } from './qmlCatalog'
 
+interface QmlScopeObject {
+  type: string | null
+  id?: string
+  /** property name → QML primitive type (int, bool, string, …) */
+  declaredProperties: Map<string, string>
+  /** function name → parameter name list */
+  methods: Map<string, string[]>
+}
+
 interface QmlDocumentContext {
   currentType: string | null
+  /** 当前对象在对象树中的父对象（QML parent 语义） */
+  parentObject: QmlScopeObject | null
   ids: Map<string, string>
   /** property name → QML primitive type (int, bool, string, …) */
   declaredProperties: Map<string, string>
@@ -107,12 +118,47 @@ function typeBeforeBrace(source: string, braceOffset: number): string | null {
 function scanStructure(source: string, cursorOffset: number): QmlDocumentContext {
   const maskedAll = maskNonCode(source)
   const maskedPrefix = maskNonCode(source.slice(0, cursorOffset))
-  const stack: Array<string | null> = []
-  for (let index = 0; index < maskedPrefix.text.length; index++) {
-    if (maskedPrefix.text[index] === '{') stack.push(typeBeforeBrace(maskedPrefix.text, index))
-    else if (maskedPrefix.text[index] === '}') stack.pop()
+
+  // 按出现顺序扫描对象层级与每层声明的 id/property/function
+  const objectPattern = /[{}]|\bid\s*:\s*([A-Za-z_][A-Za-z0-9_]*)|\b(?:readonly\s+|required\s+|default\s+)?property\s+([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+([A-Za-z_]\w*)|\bfunction\s+([A-Za-z_]\w*)\s*\(([^)]*?)\)/g
+  const buildObjectStack = (text: string): QmlScopeObject[] => {
+    const stack: QmlScopeObject[] = []
+    objectPattern.lastIndex = 0
+    let match: RegExpExecArray | null
+    while ((match = objectPattern.exec(text))) {
+      const [full, idName, propType, propName, fnName, fnParams] = match
+      if (full === '{') {
+        stack.push({
+          type: typeBeforeBrace(text, match.index),
+          declaredProperties: new Map(),
+          methods: new Map(),
+        })
+      } else if (full === '}') {
+        stack.pop()
+      } else {
+        const top = stack[stack.length - 1]
+        if (!top) continue
+        if (idName) top.id = idName
+        else if (propName) {
+          if (top.type) top.declaredProperties.set(propName, propType)
+        } else if (fnName) {
+          if (top.type) {
+            top.methods.set(
+              fnName,
+              fnParams.split(',').map(part => part.trim()).filter(Boolean),
+            )
+          }
+        }
+      }
+    }
+    return stack
   }
-  const currentType = [...stack].reverse().find(type => type !== null) || null
+
+  // 光标处的对象栈（跳过 JS 块等 null 层，取最近两个对象作为当前对象与父对象）
+  const objectStack = buildObjectStack(maskedPrefix.text)
+  const objects = objectStack.filter(entry => entry.type !== null)
+  const currentType = objects[objects.length - 1]?.type ?? null
+  const parentObject = objects[objects.length - 2] ?? null
 
   const ids = new Map<string, string>()
   const fullStack: Array<string | null> = []
@@ -144,7 +190,7 @@ function scanStructure(source: string, cursorOffset: number): QmlDocumentContext
     methods.set(fnMatch[1], params)
   }
 
-  return { currentType, ids, declaredProperties, methods, inCode: maskedPrefix.inCode }
+  return { currentType, parentObject, ids, declaredProperties, methods, inCode: maskedPrefix.inCode }
 }
 
 function snippetForProperty(item: QmlPropertyDefinition): string {
@@ -300,6 +346,117 @@ function memberItems(typeName: string, range: monaco.Range): monaco.languages.Co
     sortText: `0-${method}`,
   }))
   return [...methods, ...properties]
+}
+
+/**
+ * `parent.` 的成员补全：按 QML parent 语义，返回当前对象父对象
+ * 的类型成员、声明的 property/function 以及 id。
+ */
+function parentMemberItems(context: QmlDocumentContext, range: monaco.Range): monaco.languages.CompletionItem[] {
+  const parent = context.parentObject
+  if (!parent?.type) return []
+  const items: monaco.languages.CompletionItem[] = []
+  const definition = qmlTypeMap.get(parent.type)
+  if (definition) {
+    const directProperties = definition.properties.filter(item => !item.name.includes('.'))
+    const propertyGroups = [...new Set(
+      definition.properties
+        .filter(item => item.name.includes('.'))
+        .map(item => item.name.split('.')[0]),
+    )]
+    items.push(...propertyItems(directProperties, range).map(item => ({
+      ...item,
+      detail: `parent (${parent.type}) · ${item.detail}`,
+    })))
+    items.push(...propertyGroups.map(group => ({
+      label: group,
+      kind: monaco.languages.CompletionItemKind.Struct,
+      detail: `parent (${parent.type}) · QML property group`,
+      insertText: `${group}.`,
+      range,
+      sortText: `0-group-${group}`,
+      command: {
+        id: 'editor.action.triggerSuggest',
+        title: 'Show property group members',
+      },
+    })))
+    items.push(...(definition.methods || []).map(method => ({
+      label: method,
+      kind: monaco.languages.CompletionItemKind.Method,
+      insertText: method,
+      detail: `parent (${parent.type}) · method`,
+      range,
+      sortText: `0-fn-${method}`,
+    })))
+  }
+  for (const [name, type] of parent.declaredProperties) {
+    items.push({
+      label: name,
+      kind: monaco.languages.CompletionItemKind.Property,
+      insertText: name,
+      detail: `parent property ${type}`,
+      range,
+      sortText: `0-prop-${name}`,
+    })
+  }
+  for (const [name, params] of parent.methods) {
+    const snippet = params.length > 0
+      ? `${name}(\${1:${params[0]}})`
+      : `${name}($0)`
+    items.push({
+      label: name,
+      kind: monaco.languages.CompletionItemKind.Function,
+      insertText: snippet,
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      detail: `parent function(${params.join(', ')})`,
+      range,
+      sortText: `0-fn-${name}`,
+    })
+  }
+  if (parent.id) {
+    items.push({
+      label: parent.id,
+      kind: monaco.languages.CompletionItemKind.Variable,
+      insertText: parent.id,
+      detail: `parent id · ${parent.type}`,
+      range,
+      sortText: `0-id-${parent.id}`,
+    })
+  }
+  return items
+}
+
+const consoleMembers: Array<[string, string]> = [
+  ['log', 'log("$1")'],
+  ['info', 'info("$1")'],
+  ['warn', 'warn("$1")'],
+  ['error', 'error("$1")'],
+  ['debug', 'debug("$1")'],
+  ['trace', 'trace()'],
+  ['assert', 'assert($1)'],
+  ['count', 'count("$1")'],
+  ['dir', 'dir($1)'],
+  ['group', 'group("$1")'],
+  ['groupCollapsed', 'groupCollapsed("$1")'],
+  ['groupEnd', 'groupEnd()'],
+  ['profile', 'profile("$1")'],
+  ['profileEnd', 'profileEnd()'],
+  ['table', 'table($1)'],
+  ['time', 'time("$1")'],
+  ['timeEnd', 'timeEnd("$1")'],
+  ['clear', 'clear()'],
+]
+
+function consoleMemberItems(range: monaco.Range): monaco.languages.CompletionItem[] {
+  return consoleMembers.map(([name, snippet]) => ({
+    label: name,
+    kind: monaco.languages.CompletionItemKind.Method,
+    insertText: snippet,
+    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    detail: `console.${name}()`,
+    range,
+    sortText: `0-${name}`,
+  }))
 }
 
 function contextPropertyItems(typeName: string, range: monaco.Range): monaco.languages.CompletionItem[] {
@@ -518,9 +675,10 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
             .map(item => ({ ...item, name: item.name.slice(owner.length + 1) }))
           : undefined
         if (contextualGroup?.length) return { suggestions: propertyItems(contextualGroup, range) }
+        if (owner === 'console') return { suggestions: consoleMemberItems(range) }
         if (groupedProperties[owner]) return { suggestions: propertyItems(groupedProperties[owner], range) }
         if (namespaceMembers[owner]) return { suggestions: valueItems(namespaceMembers[owner], range) }
-        if (owner === 'parent') return { suggestions: memberItems('Item', range) }
+        if (owner === 'parent') return { suggestions: parentMemberItems(context, range) }
         const idType = context.ids.get(owner)
         return { suggestions: idType ? memberItems(idType, range) : [] }
       }
@@ -602,6 +760,30 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
 
       // Local document symbols: ids, declared properties, functions
       suggestions.push(...localSymbolItems(context, range))
+
+      // Global QML/JS objects
+      suggestions.push({
+        label: 'console',
+        kind: monaco.languages.CompletionItemKind.Variable,
+        detail: 'QML console object',
+        insertText: 'console',
+        range,
+        sortText: `1-global-console`,
+      })
+      if (context.parentObject?.type) {
+        suggestions.push({
+          label: 'parent',
+          kind: monaco.languages.CompletionItemKind.Variable,
+          detail: `QML parent · ${context.parentObject.type}`,
+          insertText: 'parent',
+          range,
+          sortText: `1-global-parent`,
+          command: {
+            id: 'editor.action.triggerSuggest',
+            title: 'Show parent members',
+          },
+        })
+      }
 
       if (context.currentType) {
         const definition = qmlTypeMap.get(context.currentType)

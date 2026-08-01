@@ -1,5 +1,7 @@
+import { parseQmlColor, toCssColor } from './QmlColor'
 import type { QmlDocumentInstance } from './QmlDocument'
 import { QmlCanvasContext } from './QmlCanvasContext'
+import { QmlEasing, resolveQmlEasing } from './QmlAnimation'
 import { QmlObject } from './QmlObject'
 
 interface MountedNode {
@@ -16,6 +18,12 @@ function cssLength(value: unknown): string {
 
 function cssValue(value: unknown): string {
   return value == null ? '' : String(value)
+}
+
+/** 将 Qt QML 颜色值转成浏览器可识别的 CSS 颜色（解析失败返回空串） */
+function cssColor(value: unknown): string {
+  const color = parseQmlColor(value)
+  return color ? toCssColor(color) : ''
 }
 
 function modelRows(model: unknown): unknown[] {
@@ -43,7 +51,7 @@ function tagNameFor(object: QmlObject): keyof HTMLElementTagNameMap {
   if (['DatePicker', 'TimePicker'].includes(object.typeName)) return 'input'
   if (['TextArea', 'TextEdit'].includes(object.typeName)) return 'textarea'
   if (object.typeName === 'GroupBox') return 'fieldset'
-  if (['CheckBox', 'RadioButton', 'Switch'].includes(object.typeName)) return 'label'
+  if (['CheckBox', 'RadioButton', 'Switch'].includes(object.typeName)) return 'div'
   if (['TextField', 'TextInput', 'SpinBox'].includes(object.typeName)) return 'input'
   if (['Slider', 'Dial'].includes(object.typeName)) return 'div'
   return 'div'
@@ -272,7 +280,7 @@ export class QmlDomSceneGraph {
         contentItem.setInternalProperty('height', Math.max(0, geometry.height - padding * 2))
       }
     }
-    const positionedByParent = ['Row', 'Column', 'RowLayout', 'ColumnLayout', 'GridLayout', 'Flow', 'SplitView', 'TabBar']
+    const positionedByParent = ['Row', 'Column', 'RowLayout', 'ColumnLayout', 'GridLayout', 'Flow', 'SplitView', 'TabBar', 'ToolBar']
       .includes(object.parent?.typeName ?? '') ||
       (object.parent?.typeName === 'ScrollView' && layoutTypes.has(object.typeName)) ||
       contentContainerTypes.has(object.parent?.typeName ?? '')
@@ -379,21 +387,21 @@ export class QmlDomSceneGraph {
     if (['ListView', 'GridView', 'PathView'].includes(object.typeName)) element.tabIndex = 0
 
     if (object.typeName === 'Rectangle') {
-      style.backgroundColor = cssValue(object.getProperty('color'))
+      style.backgroundColor = cssColor(object.getProperty('color'))
       style.borderRadius = cssLength(object.getProperty('radius'))
       style.borderStyle = 'solid'
       style.borderWidth = cssLength(object.getProperty('border.width'))
-      style.borderColor = cssValue(object.getProperty('border.color'))
+      style.borderColor = cssColor(object.getProperty('border.color'))
     }
 
     if (object.typeName === 'ApplicationWindow') {
       style.display = object.getProperty('visible') ? 'grid' : 'none'
-      style.gridTemplateRows = '36px minmax(0, 1fr) 32px'
+      style.gridTemplateRows = 'auto minmax(0, 1fr) auto'
       style.maxWidth = '100%'
       style.boxSizing = 'border-box'
       style.overflow = 'hidden'
-      const windowColor = cssValue(object.getProperty('color'))
-      style.backgroundColor = !windowColor || windowColor === 'transparent' ? 'var(--qml-panel-bg)' : windowColor
+      const windowColor = parseQmlColor(object.getProperty('color'))
+      style.backgroundColor = !windowColor || windowColor[3] === 0 ? 'var(--qml-panel-bg)' : toCssColor(windowColor)
     }
 
     if (object.typeName === 'Loader') {
@@ -417,10 +425,10 @@ export class QmlDomSceneGraph {
       style.boxSizing = 'border-box'
       if (object === header) {
         style.gridRow = '1'
-        style.height = '36px'
+        style.height = 'auto'
       } else if (object === footer) {
         style.gridRow = '3'
-        style.height = '32px'
+        style.height = 'auto'
       } else {
         style.gridRow = '2'
         style.height = '100%'
@@ -444,12 +452,15 @@ export class QmlDomSceneGraph {
 
     if (object.typeName === 'Text' || object.typeName === 'Label') {
       element.textContent = cssValue(object.getProperty('text'))
-      const textColor = cssValue(object.getProperty('color'))
-      const hasCustomRectangleBackground = object.parent?.typeName === 'Rectangle' &&
-        !['', 'transparent'].includes(cssValue(object.parent.getProperty('color')))
-      style.color = (!textColor || textColor === 'black') && !hasCustomRectangleBackground
+      const textColor = parseQmlColor(object.getProperty('color'))
+      const hasCustomRectangleBackground = object.parent?.typeName === 'Rectangle' && (() => {
+        const parentColor = parseQmlColor(object.parent.getProperty('color'))
+        return parentColor !== null && parentColor[3] > 0
+      })()
+      const isDefaultBlack = textColor === null || (textColor[3] === 255 && textColor[0] === 0 && textColor[1] === 0 && textColor[2] === 0)
+      style.color = isDefaultBlack && !hasCustomRectangleBackground
         ? 'var(--qml-control-text)'
-        : textColor
+        : textColor ? toCssColor(textColor) : ''
       style.fontSize = cssLength(Number(object.getProperty('font.pixelSize')) || 16)
       style.fontFamily = cssValue(object.getProperty('font.family'))
       style.fontWeight = object.getProperty('font.bold') ? 'bold' : 'normal'
@@ -459,27 +470,32 @@ export class QmlDomSceneGraph {
     }
 
     if (checkTypes.has(object.typeName)) {
-      let input = element.querySelector<HTMLInputElement>(':scope > input')
-      let marker = element.querySelector<HTMLSpanElement>(':scope > .qml-check-marker')
+      let indicator = element.querySelector<HTMLSpanElement>(':scope > .qml-check-indicator')
+      let checkMark = indicator?.querySelector<HTMLSpanElement>(':scope > .qml-check-mark')
       let caption = element.querySelector<HTMLSpanElement>(':scope > .qml-check-caption')
-      if (!input || !marker || !caption) {
-        input = this.domDocument.createElement('input')
-        marker = this.domDocument.createElement('span')
+      if (!indicator || !checkMark || !caption) {
+        indicator = this.domDocument.createElement('span')
+        checkMark = this.domDocument.createElement('span')
         caption = this.domDocument.createElement('span')
-        element.replaceChildren(input, marker, caption)
+        indicator.append(checkMark)
+        element.replaceChildren(indicator, caption)
       }
-      input.className = 'qml-check-input'
-      marker.className = 'qml-check-marker'
+      indicator.className = 'qml-check-indicator'
+      checkMark.className = 'qml-check-mark'
       caption.className = 'qml-check-caption'
-      element.classList.toggle('qml-switch-control', object.typeName === 'Switch')
-      input.type = object.typeName === 'RadioButton' ? 'radio' : 'checkbox'
-      input.checked = Boolean(object.getProperty('checked'))
-      input.disabled = !object.getProperty('enabled')
-      input.tabIndex = element.tabIndex
-      if (object.typeName === 'RadioButton') {
-        const group = object.getProperty('ButtonGroup.group')
-        input.name = group instanceof QmlObject ? cssValue(group.getProperty('objectName')) || 'qml-radio-group' : cssValue(group)
-      }
+
+      const checked = Boolean(object.getProperty('checked'))
+      const checkState = Number(object.getProperty('checkState'))
+      const isPartial = checkState === 1
+      const isRadio = object.typeName === 'RadioButton'
+      const isSwitch = object.typeName === 'Switch'
+
+      element.classList.toggle('qml-switch-control', isSwitch)
+      element.classList.toggle('qml-radio-control', isRadio)
+      element.classList.toggle('qml-checked', checked)
+      element.classList.toggle('qml-partial', isPartial)
+      element.classList.toggle('qml-disabled', !object.getProperty('enabled'))
+
       caption.textContent = cssValue(object.getProperty('text'))
     }
 
@@ -524,6 +540,18 @@ export class QmlDomSceneGraph {
       style.flexDirection = object.typeName === 'Row' ? 'row' : 'column'
       style.gap = cssLength(object.getProperty('spacing'))
       style.padding = cssLength(object.getProperty('padding'))
+    }
+
+    if (object.typeName === 'ToolBar') {
+      style.display = object.getProperty('visible') ? 'flex' : 'none'
+      style.alignItems = 'center'
+      style.backgroundColor = 'var(--qml-panel-muted-bg)'
+      style.borderBottom = object.parent?.getProperty('header') === object ? '1px solid var(--qml-control-border)' : ''
+      style.borderTop = object.parent?.getProperty('footer') === object ? '1px solid var(--qml-control-border)' : ''
+      if (geometry.height <= 0) {
+        style.height = 'auto'
+        style.minHeight = 'max-content'
+      }
     }
 
     if (object.typeName === 'MenuBar') {
@@ -597,12 +625,28 @@ export class QmlDomSceneGraph {
 
     if (buttonTypes.has(object.typeName)) {
       if (!(object.getProperty('contentItem') instanceof QmlObject)) {
-        element.textContent = cssValue(object.getProperty('text'))
+        // 用 .qml-button-content span 渲染文本（Qt contentItem 语义）。裸文本节点
+        // 属于非定位内容，按 CSS 绘制顺序画在绝对定位的 background 之下，不透明
+        // 背景（如 #333333）会完全盖住文本；span 带 z-index 保证文本在背景之上。
+        const text = cssValue(object.getProperty('text'))
+        let content = [...element.children].find(
+          child => child.classList.contains('qml-button-content'),
+        ) as HTMLSpanElement | undefined
+        if (!content) {
+          content = this.domDocument.createElement('span')
+          content.className = 'qml-button-content'
+          element.appendChild(content)
+        }
+        content.textContent = text
       }
       element.setAttribute('aria-pressed', cssValue(object.getProperty('checked')))
       ;(element as HTMLButtonElement).disabled = !object.getProperty('enabled')
-      if (object.typeName === 'RoundButton') style.borderRadius = '50%'
+      if (object.typeName === 'RoundButton') {
+        style.borderRadius = cssLength(object.getProperty('radius'))
+      }
       element.classList.toggle('qml-tool-button', object.typeName === 'ToolButton')
+      element.classList.toggle('qml-button-flat', Boolean(object.getProperty('flat')))
+      element.classList.toggle('qml-button-highlighted', Boolean(object.getProperty('highlighted')))
     }
 
     if (element instanceof this.domDocument.defaultView!.HTMLInputElement) {
@@ -706,7 +750,10 @@ export class QmlDomSceneGraph {
       element.setAttribute('aria-busy', cssValue(object.getProperty('running')))
     }
     if (object.typeName === 'DelayButton') {
-      if (object.getProperty('checked')) {
+      // 用户自定义了 background（background 内已用 control.progress 绘制进度条）
+      // 时，不再叠加默认主题色渐变，遵循"指定用用户的、不指定用主题色"。
+      const hasCustomBackground = object.getProperty('background') instanceof QmlObject
+      if (object.getProperty('checked') || hasCustomBackground) {
         style.removeProperty('background-image')
       } else {
         const pct = `${Math.max(0, Math.min(1, Number(object.getProperty('progress')) || 0)) * 100}%`
@@ -1148,14 +1195,153 @@ export class QmlDomSceneGraph {
       })
     }
 
-    if (buttonTypes.has(object.typeName)) {
+    const isAbstractButton = buttonTypes.has(object.typeName) || checkTypes.has(object.typeName)
+    if (isAbstractButton) {
+      let pressAndHoldTimer: number | null = null
+      let pressAndHoldTriggered = false
+
+      const clearPressAndHold = () => {
+        if (pressAndHoldTimer !== null) this.domDocument.defaultView?.clearTimeout(pressAndHoldTimer)
+        pressAndHoldTimer = null
+        pressAndHoldTriggered = false
+      }
+      const startPressAndHold = () => {
+        clearPressAndHold()
+        if (!object.hasSignal('pressAndHold')) return
+        pressAndHoldTimer = this.domDocument.defaultView?.setTimeout(() => {
+          pressAndHoldTriggered = true
+          object.emitSignal('pressAndHold')
+        }, 800) ?? null
+      }
+
+      // DelayButton 延迟动画（仅 DelayButton 使用）
+      // Qt 语义：按下后 progress 0→1 由 transition 块里的 NumberAnimation 驱动
+      // （duration 控制时长、easing.type 控制曲线）；未定义 transition 时退回
+      // 线性步进，用 delay 作为总时长。
+      const progressAnimationTypes = new Set([
+        'NumberAnimation', 'PropertyAnimation', 'ColorAnimation', 'Vector3dAnimation',
+      ])
+      const delayProgressAnimation = () => {
+        const transition = object.getProperty('transition')
+        if (!(transition instanceof QmlObject) || transition.typeName !== 'Transition') return undefined
+        return transition.children.find(child => (
+          progressAnimationTypes.has(child.typeName) &&
+          String(child.getProperty('property') || child.getProperty('properties'))
+            .split(',')
+            .map(name => name.trim())
+            .includes('progress')
+        ))
+      }
+      const cancelDelay = () => {
+        if (delayTimer !== null) this.domDocument.defaultView?.clearInterval(delayTimer)
+        delayTimer = null
+        // 仅在尚未激活时重置进度（已激活的按钮保持 progress=1）
+        if (object.typeName === 'DelayButton' && !object.getProperty('checked')) {
+          object.setInternalProperty('progress', 0)
+          element.style.removeProperty('background-image')
+        }
+      }
+      const startDelay = () => {
+        if (object.typeName !== 'DelayButton') return
+        cancelDelay()
+        const animation = delayProgressAnimation()
+        const duration = animation
+          ? Math.max(0, Number(animation.getProperty('duration')) || 0)
+          : Math.max(0, Number(object.getProperty('delay')) || 0)
+        const easing = animation
+          ? resolveQmlEasing(animation.getProperty('easing.type'))
+          : QmlEasing.Linear
+        const tickInterval = 16
+        // 用户自定义了 background 时进度条由 background 内的绑定（control.progress）
+        // 呈现，不再画默认主题色渐变，遵循"指定用用户的、不指定用主题色"。
+        const hasCustomBackground = object.getProperty('background') instanceof QmlObject
+        const material = !!element.closest('[data-qml-style="material"]')
+        const fillColor = material ? 'color-mix(in srgb, var(--qml-on-accent) 50%, transparent)' : 'var(--qml-accent)'
+        const startedAt = Date.now()
+        const tick = () => {
+          const timeRatio = duration === 0 ? 1 : Math.min(1, (Date.now() - startedAt) / duration)
+          // 缓动曲线可能过冲（Back/Elastic/Bounce），进度值保留原始值，填充条视觉上夹取到 0..1
+          const progress = easing(timeRatio)
+          object.setInternalProperty('progress', progress)
+          if (!hasCustomBackground) {
+            const clamped = Math.max(0, Math.min(1, progress))
+            element.style.backgroundImage = `linear-gradient(90deg, ${fillColor} ${clamped * 100}%, transparent ${clamped * 100}%)`
+          }
+          if (timeRatio < 1) return
+          if (!object.getProperty('checked')) {
+            object.setProperty('checked', true)
+            object.emitSignal('toggled')
+          }
+          cancelDelay()
+          object.emitSignal('activated')
+        }
+        tick()
+        if (Date.now() - startedAt < duration) {
+          delayTimer = this.domDocument.defaultView?.setInterval(tick, tickInterval) ?? null
+        }
+      }
+
+      // activate: 点击时的统一入口（AbstractButton.clicked 语义）
+      // DelayButton 也走这里（Qt 语义：未取消的按下-释放即触发 clicked；
+      // 延迟完成的 activated 由 startDelay 独立发出）
       const activate = () => {
-        if (!object.getProperty('enabled') || object.typeName === 'DelayButton') return
-        if (object.getProperty('checkable')) {
-          object.callMethod('toggle')
+        if (!object.getProperty('enabled')) return
+        if (pressAndHoldTriggered) return
+
+        // --- toggle 逻辑：按子类型分发 ---
+        if (checkTypes.has(object.typeName)) {
+          // CheckBox / RadioButton / Switch：始终 toggle
+          try {
+            if (object.typeName === 'CheckBox') {
+              // Qt 语义（QQuickCheckBox::nextCheckState）：
+              // 用户提供 nextCheckState 回调时无条件调用（与 tristate 无关）；
+              // 无回调且 tristate 时三态循环 (checkState+1)%3；
+              // 无回调时走默认 checked 翻转。
+              const nextCheckState = object.getProperty('nextCheckState')
+              if (typeof nextCheckState === 'function') {
+                const nextState = nextCheckState()
+                object.setProperty('checkState', nextState)
+                object.setProperty('checked', nextState !== 0)
+              } else if (object.getProperty('tristate')) {
+                const currentState = Number(object.getProperty('checkState'))
+                const nextState = (currentState + 1) % 3
+                object.setProperty('checkState', nextState)
+                object.setProperty('checked', nextState !== 0)
+              } else {
+                object.setProperty('checked', !object.getProperty('checked'))
+              }
+            } else if (object.typeName === 'RadioButton') {
+              if (!object.getProperty('checked')) {
+                ;[...this.mounted.keys()]
+                  .filter(sibling => sibling !== object && sibling.parent === object.parent &&
+                    sibling.typeName === 'RadioButton' && sibling.getProperty('checked'))
+                  .forEach(sibling => {
+                    sibling.setProperty('checked', false)
+                    sibling.emitSignal('toggled')
+                  })
+                object.setProperty('checked', true)
+              }
+            } else {
+              object.setProperty('checked', !object.getProperty('checked'))
+            }
+          } catch (error) {
+            // 即使绑定引擎求值失败，也要继续发射信号
+            console.error('CheckBox toggle error:', error)
+          }
+          object.emitSignal('toggled')
+        } else if (object.getProperty('checkable')) {
+          // Button (checkable=true) 的 toggle
+          try {
+            object.callMethod('toggle')
+          } catch (error) {
+            console.error('Button toggle error:', error)
+          }
           object.emitSignal('toggled')
         }
+
         object.emitSignal('clicked')
+
+        // --- 子类型特有后处理 ---
         if (object.typeName === 'TabButton' && object.parent?.typeName === 'TabBar') {
           object.parent.setProperty('currentIndex', orderedVisualChildren(object.parent).indexOf(object))
         }
@@ -1166,40 +1352,8 @@ export class QmlDomSceneGraph {
         }
         if (object.typeName === 'MenuItem' && object.parent?.typeName === 'Menu') object.parent.callMethod('close')
       }
-      const cancelDelay = () => {
-        if (delayTimer !== null) this.domDocument.defaultView?.clearInterval(delayTimer)
-        delayTimer = null
-        if (object.typeName === 'DelayButton' && Number(object.getProperty('progress')) < 1) {
-          object.setInternalProperty('progress', 0)
-          element.style.removeProperty('background-image')
-        }
-      }
-      const startDelay = () => {
-        if (object.typeName !== 'DelayButton') return
-        cancelDelay()
-        const delay = Math.max(0, Number(object.getProperty('delay')) || 0)
-        const tickInterval = 16
-        const step = delay === 0 ? 1 : tickInterval / delay
-        const material = !!element.closest('[data-qml-style="material"]')
-        const fillColor = material ? 'color-mix(in srgb, var(--qml-on-accent) 50%, transparent)' : 'var(--qml-accent)'
-        let progress = 0
-        const tick = () => {
-          progress = Math.min(1, progress + step)
-          object.setInternalProperty('progress', progress)
-          element.style.backgroundImage = `linear-gradient(90deg, ${fillColor} ${progress * 100}%, transparent ${progress * 100}%)`
-          if (progress < 1) return
-          cancelDelay()
-          if (!object.getProperty('checked')) {
-            object.setProperty('checked', true)
-            object.emitSignal('toggled')
-          }
-          object.emitSignal('activated')
-        }
-        tick()
-        if (progress < 1) {
-          delayTimer = this.domDocument.defaultView?.setInterval(tick, tickInterval) ?? null
-        }
-      }
+
+      // === 通用鼠标/键盘事件（AbstractButton 层） ===
       listen('mousedown', event => {
         object.setInternalProperty('pressed', true)
         object.setInternalProperty('down', true)
@@ -1207,12 +1361,14 @@ export class QmlDomSceneGraph {
         object.setInternalProperty('pressY', (event as MouseEvent).offsetY)
         object.emitSignal('pressed')
         startDelay()
+        startPressAndHold()
       })
       listen('mouseup', () => {
         object.setInternalProperty('pressed', false)
         object.setInternalProperty('down', false)
         object.emitSignal('released')
         cancelDelay()
+        clearPressAndHold()
       })
       listen('mouseleave', () => {
         if (!object.getProperty('pressed')) return
@@ -1220,6 +1376,7 @@ export class QmlDomSceneGraph {
         object.setInternalProperty('down', false)
         object.emitSignal('canceled')
         cancelDelay()
+        clearPressAndHold()
       })
       listen('click', activate)
       listen('dblclick', () => object.emitSignal('doubleClicked'))
@@ -1229,6 +1386,7 @@ export class QmlDomSceneGraph {
         object.setInternalProperty('pressed', true)
         object.setInternalProperty('down', true)
         object.emitSignal('pressed')
+        startPressAndHold()
       })
       listen('keyup', event => {
         if ((event as KeyboardEvent).key !== ' ') return
@@ -1236,31 +1394,10 @@ export class QmlDomSceneGraph {
         object.setInternalProperty('pressed', false)
         object.setInternalProperty('down', false)
         object.emitSignal('released')
+        clearPressAndHold()
         activate()
       })
-      removers.push(cancelDelay)
-    }
-
-    if (checkTypes.has(object.typeName)) {
-      const updateChecked = (event: Event) => {
-        const input = event.target as HTMLInputElement
-        if (!(input instanceof this.domDocument.defaultView!.HTMLInputElement)) return
-        if (object.getProperty('checked') === input.checked) return
-        if (object.typeName === 'RadioButton' && input.checked) {
-          ;[...this.mounted.keys()]
-            .filter(sibling => sibling !== object && sibling.parent === object.parent &&
-              sibling.typeName === 'RadioButton' && sibling.getProperty('checked'))
-            .forEach(sibling => {
-              sibling.setProperty('checked', false)
-              sibling.emitSignal('toggled')
-            })
-        }
-        object.setProperty('checked', input.checked)
-        object.emitSignal('toggled')
-        object.emitSignal('clicked')
-      }
-      listen('click', updateChecked)
-      listen('change', updateChecked)
+      removers.push(cancelDelay, clearPressAndHold)
     }
 
     if (textInputTypes.has(object.typeName)) {

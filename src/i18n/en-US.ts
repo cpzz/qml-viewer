@@ -17,6 +17,7 @@ export default {
     theme: 'Toggle light/dark theme',
     controlStyle: 'QML control style',
     language: '切换到中文',
+    format: 'Format code',
   },
   fileExplorer: {
     files: 'FILES',

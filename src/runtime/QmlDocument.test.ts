@@ -50,6 +50,30 @@ describe('instantiateQmlDocument', () => {
     active.dispose()
   })
 
+  it('exposes function-valued properties like CheckBox.nextCheckState as callable values', async () => {
+    const engine = await QmlJsEngine.create()
+    const active = activateQmlDocument(parseQML(`
+      Item {
+        CheckBox {
+          id: check
+          checkState: Qt.Unchecked
+          nextCheckState: function() {
+            if (checkState === Qt.Checked) return Qt.Unchecked
+            else return Qt.Checked
+          }
+        }
+      }
+    `), engine)
+    const check = active.ids.get('check')!
+    const nextCheckState = check.getProperty('nextCheckState')
+
+    expect(typeof nextCheckState).toBe('function')
+    expect((nextCheckState as () => number)()).toBe(2) // Qt.Checked
+    check.setProperty('checkState', 2)
+    expect((nextCheckState as () => number)()).toBe(0) // Qt.Unchecked
+    active.dispose()
+  })
+
   it('instantiates declarative ListModel roles and resolves model ids', async () => {
     const engine = await QmlJsEngine.create()
     const active = activateQmlDocument(parseQML(`

@@ -72,7 +72,24 @@ const textProperties = [
 
 const clickProperties = [
   property('text', 'string'), property('checkable', 'boolean'), property('checked', 'boolean'),
+  property('autoExclusive', 'boolean'), property('autoRepeat', 'boolean'),
+  property('autoRepeatDelay', 'number'), property('autoRepeatInterval', 'number'),
+  property('display', 'enum', ['AbstractButton.IconOnly', 'AbstractButton.TextOnly', 'AbstractButton.TextBesideIcon', 'AbstractButton.TextUnderIcon']),
+  property('down', 'boolean'), property('pressed', 'boolean', undefined, undefined, true),
+  property('pressX', 'number', undefined, undefined, true), property('pressY', 'number', undefined, undefined, true),
+  property('flat', 'boolean'), property('highlighted', 'boolean'),
+  property('action', 'var'),
+  property('icon.name', 'string'), property('icon.source', 'url'),
+  property('icon.width', 'number'), property('icon.height', 'number'),
+  property('icon.color', 'color'), property('icon.cache', 'boolean'),
+  property('implicitIndicatorWidth', 'number', undefined, undefined, true),
+  property('implicitIndicatorHeight', 'number', undefined, undefined, true),
+  property('indicator', 'component'),
+  property('background', 'component'),
+  property('transition', 'expression'),
   property('onClicked', 'handler'), property('onPressed', 'handler'), property('onReleased', 'handler'),
+  property('onCanceled', 'handler'), property('onDoubleClicked', 'handler'),
+  property('onPressAndHold', 'handler'), property('onToggled', 'handler'),
 ]
 
 const selectionModeValues = [
@@ -99,7 +116,7 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
   RoundButton: [...clickProperties, property('radius', 'number')],
   ToolButton: clickProperties,
   DelayButton: [...clickProperties, property('delay', 'number'), property('progress', 'number')],
-  CheckBox: [property('text', 'string'), property('checked', 'boolean'), property('onClicked', 'handler'), property('onToggled', 'handler')],
+  CheckBox: [...clickProperties, property('checkState', 'number'), property('tristate', 'boolean'), property('nextCheckState', 'expression'), property('onToggled', 'handler')],
   RadioButton: [property('text', 'string'), property('checked', 'boolean'), property('ButtonGroup.group', 'expression'), property('onClicked', 'handler')],
   Switch: [property('text', 'string'), property('checked', 'boolean'), property('onClicked', 'handler'), property('onToggled', 'handler')],
   Slider: [property('from', 'number'), property('to', 'number'), property('value', 'number'), property('stepSize', 'number'), property('orientation', 'enum', ['Qt.Horizontal', 'Qt.Vertical']), property('onValueChanged', 'handler')],
@@ -158,7 +175,7 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
   PieSeries: [property('name', 'string')],
   PieSlice: [property('label', 'string'), property('value', 'number'), property('color', 'color')],
   XYPoint: [property('x', 'number'), property('y', 'number')],
-  NumberAnimation: [property('target', 'expression'), property('property', 'string'), property('from', 'number'), property('to', 'number'), property('duration', 'number'), property('running', 'boolean'), property('loops', 'number'), property('easing.type', 'enum', ['Easing.Linear', 'Easing.InQuad', 'Easing.OutQuad', 'Easing.InOutQuad', 'Easing.InCubic', 'Easing.OutCubic', 'Easing.InOutCubic'])],
+  NumberAnimation: [property('target', 'expression'), property('property', 'string'), property('from', 'number'), property('to', 'number'), property('duration', 'number'), property('running', 'boolean'), property('loops', 'number'), property('easing.type', 'enum', ['Easing.Linear', 'Easing.InQuad', 'Easing.OutQuad', 'Easing.InOutQuad', 'Easing.OutInQuad', 'Easing.InCubic', 'Easing.OutCubic', 'Easing.InOutCubic', 'Easing.OutInCubic', 'Easing.InQuart', 'Easing.OutQuart', 'Easing.InOutQuart', 'Easing.OutInQuart', 'Easing.InQuint', 'Easing.OutQuint', 'Easing.InOutQuint', 'Easing.OutInQuint', 'Easing.InSine', 'Easing.OutSine', 'Easing.InOutSine', 'Easing.OutInSine', 'Easing.InExpo', 'Easing.OutExpo', 'Easing.InOutExpo', 'Easing.OutInExpo', 'Easing.InCirc', 'Easing.OutCirc', 'Easing.InOutCirc', 'Easing.OutInCirc', 'Easing.InElastic', 'Easing.OutElastic', 'Easing.InOutElastic', 'Easing.OutInElastic', 'Easing.InBack', 'Easing.OutBack', 'Easing.InOutBack', 'Easing.OutInBack', 'Easing.InBounce', 'Easing.OutBounce', 'Easing.InOutBounce', 'Easing.OutInBounce'])],
   ColorAnimation: [property('target', 'expression'), property('property', 'string'), property('from', 'color'), property('to', 'color'), property('duration', 'number'), property('running', 'boolean')],
   PropertyAnimation: [property('target', 'expression'), property('property', 'string'), property('from', 'expression'), property('to', 'expression'), property('duration', 'number'), property('running', 'boolean')],
 }
@@ -166,6 +183,7 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
 const supportedTypes = builtinQmlTypeDefinitions.map(type => type.name)
 
 const methodsByType: Record<string, string[]> = {
+  Button: ['toggle()'],
   Dialog: ['open()', 'close()', 'accept()', 'reject()'],
   Popup: ['open()', 'close()'],
   Drawer: ['open()', 'close()'],

@@ -9,7 +9,7 @@ import { QmlComponent } from './QmlComponent'
 import { QmlJsEngine } from './QmlJsEngine'
 import { QmlItemViewController } from './QmlItemViewController'
 import { QmlLoaderController } from './QmlLoaderController'
-import type { QmlObject } from './QmlObject'
+import { QmlObject } from './QmlObject'
 
 describe('QmlDomSceneGraph', () => {
   function createScene() {
@@ -159,7 +159,7 @@ describe('QmlDomSceneGraph', () => {
 
     expect(container.querySelectorAll('.qml-runtime-node')).toHaveLength(3)
     expect(sceneGraph.getElement(root)?.style.width).toBe('320px')
-    expect(sceneGraph.getElement(panel)?.style.backgroundColor).toBe('red')
+    expect(sceneGraph.getElement(panel)?.style.backgroundColor).toBe('#ff0000')
     expect(sceneGraph.getElement(panel)?.style.left).toBe('10px')
     expect(sceneGraph.getElement(label)?.textContent).toBe('Hello')
     expect(sceneGraph.getElement(label)?.parentElement).toBe(sceneGraph.getElement(panel))
@@ -189,10 +189,28 @@ describe('QmlDomSceneGraph', () => {
     label.setProperty('text', 'Updated')
 
     expect(sceneGraph.getElement(panel)).toBe(panelElement)
-    expect(panelElement?.style.backgroundColor).toBe('blue')
+    expect(panelElement?.style.backgroundColor).toBe('#0000ff')
     expect(panelElement?.style.left).toBe('40px')
     expect(sceneGraph.getElement(label)).toBe(labelElement)
     expect(labelElement?.textContent).toBe('Updated')
+  })
+
+  it('renders Qt ARGB colors with alpha in the highest byte', () => {
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      Item {
+        Rectangle { id: translucent; width: 50; height: 50; color: "#80FF0000" }
+        Rectangle { id: named; width: 50; height: 50; color: "red" }
+      }
+    `))
+    const container = document.createElement('main')
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, container)
+    const translucent = qmlDocument.ids.get('translucent')!
+    const named = qmlDocument.ids.get('named')!
+    // Qt 的 #AARRGGBB（半透明红）→ 浏览器 CSS #RRGGBBAA
+    expect(sceneGraph.getElement(translucent)?.style.backgroundColor).toBe('#ff000080')
+    expect(sceneGraph.getElement(named)?.style.backgroundColor).toBe('#ff0000')
+    sceneGraph.dispose()
   })
 
   it('projects reactive implicit sizes for text and controls', () => {
@@ -401,11 +419,11 @@ describe('QmlDomSceneGraph', () => {
     const panel = qmlDocument.ids.get('panel')!
     const panelElement = sceneGraph.getElement(panel)!
 
-    expect(panelElement.style.backgroundColor).toBe('red')
+    expect(panelElement.style.backgroundColor).toBe('#ff0000')
     root.setProperty('accent', 'blue')
 
     expect(sceneGraph.getElement(panel)).toBe(panelElement)
-    expect(panelElement.style.backgroundColor).toBe('blue')
+    expect(panelElement.style.backgroundColor).toBe('#0000ff')
   })
 
   it('recomputes fill and center anchors when parent geometry changes', () => {
@@ -535,7 +553,7 @@ describe('QmlDomSceneGraph', () => {
     const itemElement = sceneGraph.getElement(item)
 
     expect(item.parent).toBe(loader)
-    expect(itemElement?.style.backgroundColor).toBe('green')
+    expect(itemElement?.style.backgroundColor).toBe('#008000')
     expect(itemElement?.parentElement).toBe(sceneGraph.getElement(loader))
 
     loader.setProperty('sourceComponent', null)
@@ -648,7 +666,7 @@ describe('QmlDomSceneGraph', () => {
     fieldElement.value = 'Hello'
     fieldElement.dispatchEvent(new InputEvent('input', { bubbles: true }))
     fieldElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-    checkElement.querySelector('input')?.click()
+    checkElement.click()
     const sliderInput = sliderElement.querySelector<HTMLInputElement>('.qml-range-native')!
     sliderInput.value = '7'
     sliderInput.dispatchEvent(new InputEvent('input', { bubbles: true }))
@@ -663,6 +681,78 @@ describe('QmlDomSceneGraph', () => {
     expect(sliderElement.querySelector('.qml-slider-track')).not.toBeNull()
     expect(sliderElement.querySelector('.qml-slider-fill')).not.toBeNull()
     expect(sliderElement.querySelector('.qml-slider-handle')).not.toBeNull()
+  })
+
+  it('calls CheckBox.nextCheckState on click even without tristate', async () => {
+    const jsEngine = await QmlJsEngine.create()
+    const qmlDocument = activateQmlDocument(parseQML(`
+      Item {
+        CheckBox {
+          id: check
+          text: "Custom"
+          nextCheckState: function() {
+            if (checkState === Qt.Checked) return Qt.Unchecked
+            else return Qt.Checked
+          }
+        }
+      }
+    `), jsEngine)
+    const container = document.createElement('main')
+    document.body.append(container)
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, container)
+    const check = qmlDocument.ids.get('check')!
+    const element = sceneGraph.getElement(check)!
+
+    element.click()
+    expect(check.getProperty('checkState')).toBe(2) // Qt.Checked
+    element.click()
+    expect(check.getProperty('checkState')).toBe(0) // Qt.Unchecked
+
+    sceneGraph.dispose()
+    qmlDocument.dispose()
+  })
+
+  it('drives a bound checkState through the user nextCheckState cycle (button.qml Third)', async () => {
+    const jsEngine = await QmlJsEngine.create()
+    const qmlDocument = activateQmlDocument(parseQML(`
+      Column {
+        property bool allChildrenChecked: false
+        property bool anyChildChecked: true
+        CheckBox {
+          id: check
+          text: "Third"
+          tristate: true
+          checkState: allChildrenChecked ? Qt.Checked : anyChildChecked ? Qt.PartiallyChecked : Qt.Unchecked
+          nextCheckState: function() {
+            if (checkState === Qt.Checked) return Qt.PartiallyChecked
+            else if (checkState === Qt.PartiallyChecked) return Qt.Unchecked
+            else return Qt.Checked
+          }
+        }
+      }
+    `), jsEngine)
+    const container = document.createElement('main')
+    document.body.append(container)
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, container)
+    const check = qmlDocument.ids.get('check')!
+    const element = sceneGraph.getElement(check)!
+
+    expect(check.getProperty('checkState')).toBe(1) // PartiallyChecked
+
+    element.click()
+    expect(check.getProperty('checkState')).toBe(0) // Unchecked
+
+    element.click()
+    expect(check.getProperty('checkState')).toBe(2) // Checked
+    expect(check.getProperty('checked')).toBe(true)
+
+    element.click()
+    expect(check.getProperty('checkState')).toBe(1) // PartiallyChecked
+
+    sceneGraph.dispose()
+    qmlDocument.dispose()
   })
 
   it('projects common text, button, container, and status controls', () => {
@@ -689,8 +779,10 @@ describe('QmlDomSceneGraph', () => {
     expect(sceneGraph.getElement(qmlDocument.ids.get('label')!)?.textContent).toBe('Name')
     expect(areaElement.placeholder).toBe('Notes')
     expect(area.getProperty('text')).toBe('Updated')
-    expect(sceneGraph.getElement(qmlDocument.ids.get('radio')!)?.querySelector('input')?.type).toBe('radio')
-    expect(sceneGraph.getElement(qmlDocument.ids.get('radio')!)?.textContent).toContain('Choice')
+    const radioElement = sceneGraph.getElement(qmlDocument.ids.get('radio')!)!
+    expect(radioElement.classList.contains('qml-radio-control')).toBe(true)
+    expect(radioElement.querySelector('.qml-check-indicator')).not.toBeNull()
+    expect(radioElement.textContent).toContain('Choice')
     expect(sceneGraph.getElement(qmlDocument.ids.get('round')!)?.tagName).toBe('BUTTON')
     expect(sceneGraph.getElement(qmlDocument.ids.get('scroll')!)?.style.overflow).toBe('auto')
     expect(sceneGraph.getElement(qmlDocument.ids.get('group')!)?.getAttribute('aria-label')).toBe('Settings')
@@ -758,7 +850,9 @@ describe('QmlDomSceneGraph', () => {
     spinElement.value = '7'
     spinElement.dispatchEvent(new Event('input', { bubbles: true }))
     expect(spin.getProperty('value')).toBe(7)
-    expect(sceneGraph.getElement(toggle)?.querySelector('input')?.type).toBe('checkbox')
+    const toggleElement = sceneGraph.getElement(toggle)!
+    expect(toggleElement.classList.contains('qml-switch-control')).toBe(true)
+    expect(toggleElement.querySelector('.qml-check-indicator')).not.toBeNull()
     expect((sceneGraph.getElement(progress) as HTMLProgressElement).value).toBe(4)
     expect(sceneGraph.getElement(popup)?.style.left).toBe('100px')
     expect(sceneGraph.getElement(popup)?.style.top).toBe('100px')
@@ -859,7 +953,7 @@ describe('QmlDomSceneGraph', () => {
     expect(button.getProperty('checked')).toBe(true)
     expect(clicked).toHaveBeenCalledOnce()
 
-    sceneGraph.getElement(qmlDocument.ids.get('second')!)?.querySelector('input')?.click()
+    sceneGraph.getElement(qmlDocument.ids.get('second')!)!.click()
     expect(qmlDocument.ids.get('first')?.getProperty('checked')).toBe(false)
     expect(qmlDocument.ids.get('second')?.getProperty('checked')).toBe(true)
 
@@ -874,6 +968,124 @@ describe('QmlDomSceneGraph', () => {
     expect(delayed.getProperty('progress')).toBe(0)
     vi.advanceTimersByTime(100)
     expect(activated).not.toHaveBeenCalled()
+
+    sceneGraph.dispose()
+    vi.useRealTimers()
+  })
+
+  it('drives DelayButton progress with the transition animation duration and easing', () => {
+    vi.useFakeTimers()
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      Item {
+        DelayButton {
+          id: delayed
+          delay: 2000
+          transition: Transition {
+            NumberAnimation {
+              property: "progress"
+              duration: 100
+              easing.type: Easing.OutQuad
+            }
+          }
+        }
+      }
+    `))
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, document.createElement('main'))
+    const delayed = qmlDocument.ids.get('delayed')!
+    const activated = vi.fn()
+    delayed.connectSignal('activated', activated)
+    const element = sceneGraph.getElement(delayed)!
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    // 48ms 时进度条已走到 OutQuad(0.48) ≈ 0.73 —— 证明用的是 transition 的
+    // duration=100 + easing，而不是按 delay=2000 的线性步进
+    vi.advanceTimersByTime(48)
+    const progress = Number(delayed.getProperty('progress'))
+    expect(progress).toBeGreaterThan(0.7)
+    expect(progress).toBeLessThan(0.75)
+    // 推进到动画时长结束 → activated 触发、checked 置位、progress 停在 1
+    vi.advanceTimersByTime(120)
+    expect(activated).toHaveBeenCalledOnce()
+    expect(delayed.getProperty('checked')).toBe(true)
+    expect(Number(delayed.getProperty('progress'))).toBe(1)
+
+    sceneGraph.dispose()
+    vi.useRealTimers()
+  })
+
+  it('keeps the user-provided background colors while DelayButton progress animates', async () => {
+    const jsEngine = await QmlJsEngine.create()
+    vi.useFakeTimers()
+    const qmlDocument = activateQmlDocument(parseQML(`
+      Item {
+        DelayButton {
+          id: delayed
+          delay: 2000
+          transition: Transition {
+            NumberAnimation {
+              property: "progress"
+              duration: 100
+              easing.type: Easing.OutQuad
+            }
+          }
+          background: Rectangle {
+            color: "#333"
+            Rectangle {
+              id: fill
+              color: control.progress >= 1.0 ? "#4CAF50" : "#2196F3"
+            }
+          }
+        }
+      }
+    `), jsEngine)
+    const container = document.createElement('main')
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, container)
+    const delayed = qmlDocument.ids.get('delayed')!
+    const fill = qmlDocument.ids.get('fill')!
+    const element = sceneGraph.getElement(delayed)!
+    const fillElement = sceneGraph.getElement(fill)!
+
+    // 初始：进度条蓝色；自定义 background 时 DelayButton 自身不叠加默认主题色渐变
+    expect(fillElement.style.backgroundColor).toBe('#2196f3')
+    expect(element.style.backgroundImage).toBe('')
+
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    vi.advanceTimersByTime(48)
+    // 未到 100%：进度条仍为蓝色
+    expect(fillElement.style.backgroundColor).toBe('#2196f3')
+    expect(element.style.backgroundImage).toBe('')
+
+    vi.advanceTimersByTime(120)
+    // 动画完成：progress=1 → color 绑定刷新为绿色
+    expect(fillElement.style.backgroundColor).toBe('#4caf50')
+
+    sceneGraph.dispose()
+    vi.useRealTimers()
+  })
+
+  it('emits clicked for DelayButton on a completed press-release', () => {
+    vi.useFakeTimers()
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      Item {
+        DelayButton { id: delayed; delay: 100 }
+      }
+    `))
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, document.createElement('main'))
+    const delayed = qmlDocument.ids.get('delayed')!
+    const clicked = vi.fn()
+    const activated = vi.fn()
+    delayed.connectSignal('clicked', clicked)
+    delayed.connectSignal('activated', activated)
+    const element = sceneGraph.getElement(delayed)!
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+    element.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(clicked).toHaveBeenCalledOnce()
+    // 快速点击不会完成延迟，activated 不应触发
+    expect(activated).not.toHaveBeenCalled()
+    expect(delayed.getProperty('checked')).toBe(false)
 
     sceneGraph.dispose()
     vi.useRealTimers()
@@ -1003,5 +1215,221 @@ describe('QmlDomSceneGraph', () => {
     expect(sceneGraph.getElement(qmlDocument.ids.get('first')!)?.style.display).toBe('none')
     expect(sceneGraph.getElement(qmlDocument.ids.get('second')!)?.style.display).toBe('')
     sceneGraph.dispose()
+  })
+
+  it('reproduces delaybutton.qml: inner fill bindings (width/color) react to control.progress', async () => {
+    // 复现 examples/delaybutton.qml 的颜色语法组：自定义 background 的内层 Rectangle
+    // 通过 `control.progress` 绑定宽度与颜色。若绑定未建立或未订阅 progress，
+    // 内层填充条将不可见（用户报告"只显示矩形边框，没有填充条增长"）。
+    const jsEngine = await QmlJsEngine.create()
+    vi.useFakeTimers()
+    const errors: unknown[] = []
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => errors.push(args))
+    const qmlDocument = activateQmlDocument(parseQML(`
+      Item {
+        DelayButton {
+          id: delayed
+          delay: 2000
+          background: Rectangle {
+            color: "#333333"
+            Rectangle {
+              id: fill
+              width: parent.width * control.progress
+              height: parent.height
+              color: control.progress >= 1.0 ? "tomato" : "steelblue"
+              Behavior on color { ColorAnimation { duration: 200 } }
+            }
+          }
+          transition: Transition {
+            NumberAnimation {
+              property: "progress"
+              duration: 100
+              easing.type: Easing.Linear
+            }
+          }
+        }
+      }
+    `), jsEngine)
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, document.createElement('main'))
+    const delayed = qmlDocument.ids.get('delayed')!
+    const fill = qmlDocument.ids.get('fill')!
+    const fillElement = sceneGraph.getElement(fill)!
+    const element = sceneGraph.getElement(delayed)!
+
+    // 绑定应已建立：fill.color 由表达式求值为起始色 steelblue
+    expect(fill.getProperty('color')).toBe('steelblue')
+
+    // 进度条初始宽度应为 0（progress=0）
+    expect(Number(fill.getProperty('width'))).toBe(0)
+
+    element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    vi.advanceTimersByTime(50)
+    // 动画中途：progress > 0 → fill.width 应增长
+    expect(Number(delayed.getProperty('progress'))).toBeGreaterThan(0)
+    expect(Number(fill.getProperty('width'))).toBeGreaterThan(0)
+    expect(fillElement.style.width).toBe(`${Number(fill.getProperty('width'))}px`)
+    // 未到 100%：颜色仍为起始色
+    expect(fill.getProperty('color')).toBe('steelblue')
+
+    vi.advanceTimersByTime(120)
+    // 动画完成：progress=1 → 颜色切换为目标色
+    expect(Number(delayed.getProperty('progress'))).toBeGreaterThanOrEqual(1)
+    expect(fill.getProperty('color')).toBe('tomato')
+
+    expect(errors).toEqual([])
+    errorSpy.mockRestore()
+    sceneGraph.dispose()
+    vi.useRealTimers()
+  })
+
+  it('reproduces delaybutton.qml inside layout containers (ColumnLayout > RowLayout > ColumnLayout)', async () => {
+    // 完整复刻 examples/delaybutton.qml 的 Named Colors 按钮（含布局容器、text、radius、onActivated）。
+    // 若布局容器改变按钮/background 的几何导致 fill 不可见，此处会暴露。
+    const jsEngine = await QmlJsEngine.create()
+    vi.useFakeTimers()
+    const qmlDocument = activateQmlDocument(parseQML(`
+      ColumnLayout {
+        RowLayout {
+          ColumnLayout {
+            DelayButton {
+              id: delayed
+              text: "Named Colors"
+              delay: 1500
+              background: Rectangle {
+                color: "#333333"
+                radius: 4
+                Rectangle {
+                  id: fill
+                  width: parent.width * control.progress
+                  height: parent.height
+                  color: control.progress >= 1.0 ? "tomato" : "steelblue"
+                  radius: 4
+                  Behavior on color { ColorAnimation { duration: 200 } }
+                }
+              }
+              transition: Transition {
+                NumberAnimation {
+                  property: "progress"
+                  duration: 800
+                  easing.type: Easing.OutCubic
+                }
+              }
+              onActivated: console.log("Activated: ", text, progress)
+            }
+          }
+        }
+      }
+    `), jsEngine)
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, document.createElement('main'))
+    const delayed = qmlDocument.ids.get('delayed')!
+    const fill = qmlDocument.ids.get('fill')!
+    const element = sceneGraph.getElement(delayed)!
+    const fillElement = sceneGraph.getElement(fill)!
+    const background = delayed.getProperty('background')
+
+    // 布局容器下按钮几何应非零（implicitWidth 来自 text）
+    expect(Number(element.style.width.replace('px', ''))).toBeGreaterThan(0)
+    // 自定义 background 已挂载为按钮子元素
+    expect(background instanceof QmlObject).toBe(true)
+    const backgroundElement = sceneGraph.getElement(background as QmlObject)!
+    expect(backgroundElement.parentElement).toBe(element)
+    // fill 挂在 background 内
+    expect(fillElement.parentElement).toBe(backgroundElement)
+
+    // 绑定已建立：fill.color = steelblue；初始 width = 0（progress=0）
+    expect(fill.getProperty('color')).toBe('steelblue')
+    expect(Number(fill.getProperty('width'))).toBe(0)
+    expect(fillElement.style.width).toBe('0px')
+
+    // 驱动 progress：width 应随 parent.width 增长
+    delayed.setInternalProperty('progress', 0.5)
+    const grownWidth = Number(fill.getProperty('width'))
+    expect(grownWidth).toBeGreaterThan(0)
+    expect(fillElement.style.width).toBe(`${grownWidth}px`)
+
+    sceneGraph.dispose()
+    vi.useRealTimers()
+  })
+
+  it('renders named, Qt.rgba, ARGB-hex and Qt.hsla fills through Behavior on color', async () => {
+    // 覆盖 delaybutton.qml 颜色语法组的四种颜色格式：命名色、Qt.rgba、#AARRGGBB、Qt.hsla。
+    // 验证绑定求值 → Behavior on color 插值 → CSS 渲染的完整链路，以及按钮文本节点
+    // 不再清空 background 子元素（textContent 修复）。
+    const jsEngine = await QmlJsEngine.create()
+    vi.useFakeTimers()
+    const qmlDocument = activateQmlDocument(parseQML(`
+      Item {
+        DelayButton {
+          id: named; text: "Named Colors"; delay: 100
+          background: Rectangle { color: "#333333"; Rectangle { id: fillNamed; width: parent.width * control.progress; color: control.progress >= 1.0 ? "tomato" : "steelblue"; Behavior on color { ColorAnimation { duration: 100 } } } }
+          transition: Transition { NumberAnimation { property: "progress"; duration: 100; easing.type: Easing.Linear } }
+        }
+        DelayButton {
+          id: rgba; text: "Qt.rgba"; delay: 100
+          background: Rectangle { color: Qt.rgba(0, 0, 0, 0.25); Rectangle { id: fillRgba; width: parent.width * control.progress; color: control.progress >= 1.0 ? Qt.rgba(1, 0.3, 0, 0.9) : Qt.rgba(0, 0.6, 1, 0.5); Behavior on color { ColorAnimation { duration: 100 } } } }
+          transition: Transition { NumberAnimation { property: "progress"; duration: 100; easing.type: Easing.Linear } }
+        }
+        DelayButton {
+          id: argb; text: "ARGB Hex"; delay: 100
+          background: Rectangle { color: "#26000000"; Rectangle { id: fillArgb; width: parent.width * control.progress; color: control.progress >= 1.0 ? "#E64CAF50" : "#8090CBF9"; Behavior on color { ColorAnimation { duration: 100 } } } }
+          transition: Transition { NumberAnimation { property: "progress"; duration: 100; easing.type: Easing.Linear } }
+        }
+        DelayButton {
+          id: hsla; text: "Messy Nested"; delay: 100
+          background: Rectangle { color: "#333333"; Rectangle { id: fillHsla; width: parent.width * control.progress; color: control.progress >= 1.0 ? Qt.hsla(0.33, 0.9, 0.45, 1) : Qt.hsla(0.58, 0.85, 0.6, 0.55); Behavior on color { ColorAnimation { duration: 100 } } } }
+          transition: Transition { NumberAnimation { property: "progress"; duration: 100; easing.type: Easing.Linear } }
+        }
+      }
+    `), jsEngine)
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, document.createElement('main'))
+    const named = qmlDocument.ids.get('named')!
+    const rgba = qmlDocument.ids.get('rgba')!
+    const argb = qmlDocument.ids.get('argb')!
+    const hsla = qmlDocument.ids.get('hsla')!
+    const fillNamed = qmlDocument.ids.get('fillNamed')!
+    const fillRgba = qmlDocument.ids.get('fillRgba')!
+    const fillArgb = qmlDocument.ids.get('fillArgb')!
+    const fillHsla = qmlDocument.ids.get('fillHsla')!
+
+    // 绑定建立：背景保持挂载在按钮内（textContent 修复的回归保护）
+    expect(sceneGraph.getElement(named)!.contains(sceneGraph.getElement(fillNamed) as Node)).toBe(true)
+
+    // 文本用 .qml-button-content span 渲染且位于背景之上（contentItem 语义回归保护）
+    const namedElement = sceneGraph.getElement(named)!
+    const contentSpan = namedElement.querySelector<HTMLSpanElement>(':scope > .qml-button-content')
+    expect(contentSpan).not.toBeNull()
+    expect(contentSpan!.textContent).toBe('Named Colors')
+    expect(contentSpan!.style.zIndex).toBe('1')
+
+    // 起始色：Qt 语义字符串（#AARRGGBB）
+    expect(fillNamed.getProperty('color')).toBe('steelblue')
+    expect(fillRgba.getProperty('color')).toBe('#800099ff')   // Qt.rgba(0,0.6,1,0.5) → AARRGGBB
+    expect(fillArgb.getProperty('color')).toBe('#8090CBF9')   // alpha 0x80 在最高位
+    expect(fillHsla.getProperty('color')).toMatch(/^#[0-9a-fA-F]{8}$/)   // Qt.hsla → Qt 格式
+
+    // 渲染：CSS 格式（alpha 最低位）
+    expect(sceneGraph.getElement(fillNamed)!.style.backgroundColor).toBe('#4682b4')        // steelblue
+    expect(sceneGraph.getElement(fillRgba)!.style.backgroundColor).toBe('#0099ff80')       // 半透明蓝
+    expect(sceneGraph.getElement(fillArgb)!.style.backgroundColor).toBe('#8090cbf9')       // 半透明浅蓝
+    expect(sceneGraph.getElement(fillHsla)!.style.backgroundColor).toMatch(/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/)
+
+    // 驱动 progress 到完成：颜色切换为目标色（Behavior 动画结束后为 Qt 格式小写 hex）
+    named.setInternalProperty('progress', 1)
+    rgba.setInternalProperty('progress', 1)
+    argb.setInternalProperty('progress', 1)
+    hsla.setInternalProperty('progress', 1)
+    vi.advanceTimersByTime(250)
+    expect(fillNamed.getProperty('color')).toBe('#ff6347')     // tomato
+    expect(fillRgba.getProperty('color')).toBe('#e6ff4d00')    // Qt.rgba(1, 0.3, 0, 0.9)
+    expect(fillArgb.getProperty('color')).toBe('#e64caf50')    // #E64CAF50
+    expect(fillHsla.getProperty('color')).toMatch(/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/)
+    // 渲染目标色
+    expect(sceneGraph.getElement(fillNamed)!.style.backgroundColor).toBe('#ff6347')        // tomato
+
+    sceneGraph.dispose()
+    vi.useRealTimers()
   })
 })

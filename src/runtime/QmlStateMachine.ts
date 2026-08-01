@@ -146,28 +146,43 @@ export interface QmlBehaviorOptions {
   duration?: number
   easing?: QmlEasingFunction
   scheduler?: QmlAnimationScheduler
+  valueType?: 'number' | 'color' | 'vector'
 }
 
 export class QmlBehavior {
-  private animation: QmlPropertyAnimation | null = null
+  private animation: QmlAnimation | null = null
   private applying = false
   private readonly unsubscribe: () => void
 
   constructor(private readonly options: QmlBehaviorOptions) {
     this.unsubscribe = options.target.onPropertyChanged(options.property, change => {
-      if (this.applying || typeof change.previousValue !== 'number' || typeof change.value !== 'number') return
+      if (this.applying) return
+      const colorLike = this.options.valueType === 'color' || this.options.valueType === 'vector'
+      const numeric = typeof change.previousValue === 'number' && typeof change.value === 'number'
+      if (!colorLike && !numeric) return
+      if (colorLike && (change.previousValue == null || change.value == null)) return
       this.applying = true
       options.target.setInternalProperty(options.property, change.previousValue)
       this.animation?.stop()
-      const animation = new QmlPropertyAnimation({
-        target: options.target,
-        property: options.property,
-        from: change.previousValue,
-        to: change.value,
-        duration: options.duration,
-        easing: options.easing,
-        scheduler: options.scheduler,
-      })
+      const animation = colorLike
+        ? new QmlValueAnimation({
+          target: options.target,
+          property: options.property,
+          from: change.previousValue,
+          to: change.value,
+          duration: options.duration,
+          easing: options.easing,
+          scheduler: options.scheduler,
+        })
+        : new QmlPropertyAnimation({
+          target: options.target,
+          property: options.property,
+          from: change.previousValue as number,
+          to: change.value as number,
+          duration: options.duration,
+          easing: options.easing,
+          scheduler: options.scheduler,
+        })
       this.animation = animation
       void animation.start().finally(() => {
         if (this.animation === animation) {

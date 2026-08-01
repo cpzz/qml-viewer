@@ -113,6 +113,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('horizontalAlignment', 'var', 'Text.AlignLeft'),
       property('verticalAlignment', 'var', 'Text.AlignTop'),
       property('wrapMode', 'var', 'Text.NoWrap'),
+      property('elide', 'var', 'Text.ElideNone'),
     ],
   },
   { name: 'Label', baseType: 'Text', properties: [property('padding', 'real', 0)] },
@@ -525,6 +526,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('focusPolicy', 'var', 'Qt.StrongFocus'),
       property('background', 'Item', null),
       property('contentItem', 'Item', null),
+      property('transition', 'Transition', null),
       property('palette.button', 'color', '#f3f3f3'),
       property('palette.buttonText', 'color', '#202020'),
       property('palette.highlight', 'color', '#2563eb'),
@@ -543,9 +545,23 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('autoRepeat', 'bool', false),
       property('autoRepeatDelay', 'int', 300),
       property('autoRepeatInterval', 'int', 100),
+      property('display', 'enum', 0),
       property('down', 'bool', false),
+      property('pressed', 'bool', false, { readonly: true }),
+      property('flat', 'bool', false),
+      property('highlighted', 'bool', false),
       property('pressX', 'real', 0, { readonly: true }),
       property('pressY', 'real', 0, { readonly: true }),
+      property('implicitIndicatorWidth', 'real', 0, { readonly: true }),
+      property('implicitIndicatorHeight', 'real', 0, { readonly: true }),
+      property('indicator', 'component', null),
+      property('icon.name', 'string', ''),
+      property('icon.source', 'url', ''),
+      property('icon.width', 'int', -1),
+      property('icon.height', 'int', -1),
+      property('icon.color', 'color', ''),
+      property('icon.cache', 'bool', true),
+      property('action', 'var', null),
     ],
     signals: ['canceled', 'clicked', 'doubleClicked', 'pressAndHold', 'pressed', 'released', 'toggled'],
     methods: {
@@ -563,7 +579,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
     },
   },
   { name: 'RoundButton', baseType: 'Button', properties: [property('radius', 'real', 999)] },
-  { name: 'ToolButton', baseType: 'Button' },
+  { name: 'ToolButton', baseType: 'Button', properties: [property('implicitHeight', 'real', 40, { readonly: true })] },
   {
     name: 'ItemDelegate',
     baseType: 'Button',
@@ -572,6 +588,11 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   {
     name: 'CheckBox',
     baseType: 'Button',
+    properties: [
+      property('checkState', 'int', 0), // Qt.Unchecked = 0, Qt.PartiallyChecked = 1, Qt.Checked = 2
+      property('tristate', 'bool', false),
+      property('nextCheckState', 'var', null),
+    ],
   },
   {
     name: 'RadioButton',
@@ -789,6 +810,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   { name: 'MenuItem', baseType: 'Button', properties: [property('shortcut', 'string', '')] },
   { name: 'MenuSeparator', baseType: 'Item', properties: [property('implicitHeight', 'real', 1, { readonly: true })] },
   { name: 'MenuBar', baseType: 'Control' },
+  { name: 'ToolBar', baseType: 'Control', properties: [property('implicitHeight', 'real', 40, { readonly: true })] },
   {
     name: 'Action',
     baseType: 'QtObject',

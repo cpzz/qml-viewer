@@ -38,6 +38,40 @@ interface QmlAliasTarget {
   propertyName: string | null
 }
 
+// Qt namespace constants
+const QT_CONSTANTS: Record<string, number> = {
+  // CheckState
+  'Qt.Unchecked': 0,
+  'Qt.PartiallyChecked': 1,
+  'Qt.Checked': 2,
+  // Alignment
+  'Qt.AlignLeft': 1,
+  'Qt.AlignRight': 2,
+  'Qt.AlignHCenter': 4,
+  'Qt.AlignTop': 32,
+  'Qt.AlignBottom': 128,
+  'Qt.AlignVCenter': 64,
+  'Qt.AlignCenter': 68,
+  // Orientation
+  'Qt.Horizontal': 1,
+  'Qt.Vertical': 2,
+  // FocusPolicy
+  'Qt.NoFocus': 0,
+  'Qt.TabFocus': 1,
+  'Qt.ClickFocus': 2,
+  'Qt.StrongFocus': 11,
+  'Qt.WheelFocus': 4,
+  // MouseButton
+  'Qt.LeftButton': 1,
+  'Qt.RightButton': 2,
+  'Qt.MiddleButton': 4,
+  // Edge
+  'Qt.LeftEdge': 1,
+  'Qt.RightEdge': 2,
+  'Qt.TopEdge': 4,
+  'Qt.BottomEdge': 8,
+}
+
 let propertyReadCollector: ((reference: QmlPropertyReference) => void) | null = null
 
 export function collectQmlPropertyReads<T>(evaluate: () => T): {

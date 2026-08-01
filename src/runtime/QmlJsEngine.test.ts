@@ -76,4 +76,39 @@ describe('QmlJsEngine', () => {
     expect(signals).toEqual([[6]])
     expect(engine.evaluateLive('root.count + count', bridge)).toBe(12)
   })
+
+  it('exposes Qt and Easing namespace constants with correct values', () => {
+    const bridge = {
+      scope: {},
+      objectIds: [],
+      hostFunctions: [],
+      contextProperties: [],
+      getContextProperty: () => undefined,
+      setContextProperty: () => {},
+      getObjectMemberKind: () => undefined,
+      getObjectProperty: () => undefined,
+      setObjectProperty: () => {},
+      callObjectMethod: () => undefined,
+      emitObjectSignal: () => {},
+      callHostFunction: () => undefined,
+    }
+
+    // Qt CheckState 常量（回归：此前裸数字注册导致全部为 0）
+    expect(engine.evaluateLive('Qt.Unchecked', bridge)).toBe(0)
+    expect(engine.evaluateLive('Qt.PartiallyChecked', bridge)).toBe(1)
+    expect(engine.evaluateLive('Qt.Checked', bridge)).toBe(2)
+    // Easing 枚举（QEasingCurve::Type 值）
+    expect(engine.evaluateLive('[Easing.Linear, Easing.OutQuad, Easing.OutBack, Easing.OutBounce]', bridge))
+      .toEqual([0, 2, 34, 38])
+    // Qt 颜色函数（QML color 值类型）：返回 Qt 语义字符串 #RRGGBB / #AARRGGBB
+    expect(engine.evaluateLive('Qt.rgba(1, 0, 0, 0.5)', bridge)).toBe('#80ff0000')
+    expect(engine.evaluateLive('Qt.rgb(1, 0, 0)', bridge)).toBe('#ff0000')
+    expect(engine.evaluateLive('Qt.hsva(0, 1, 1)', bridge)).toBe('#ff0000')
+    expect(engine.evaluateLive('Qt.hsla(0, 1, 0.5)', bridge)).toBe('#ff0000')
+    expect(engine.evaluateLive('Qt.darker("#ff0000")', bridge)).toBe('#800000')
+    expect(engine.evaluateLive('Qt.lighter("#000080")', bridge)).toBe('#0000c0')
+    expect(engine.evaluateLive('Qt.tint("#000000", "#80ff0000")', bridge)).toBe('#800000')
+    expect(engine.evaluateLive('Qt.colorEqual("red", "#ff0000")', bridge)).toBe(true)
+    expect(engine.evaluateLive('Qt.colorEqual("red", "blue")', bridge)).toBe(false)
+  })
 })

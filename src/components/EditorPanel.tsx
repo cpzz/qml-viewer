@@ -1,12 +1,15 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react'
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
 import 'monaco-editor/esm/vs/base/browser/ui/codicons/codiconStyles'
 import 'monaco-editor/esm/vs/editor/contrib/find/browser/findController'
 import 'monaco-editor/esm/vs/editor/contrib/folding/browser/folding'
 import 'monaco-editor/esm/vs/editor/contrib/semanticTokens/browser/documentSemanticTokens'
 import 'monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController'
+import 'monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter'
+import 'monaco-editor/esm/vs/editor/contrib/wordOperations/browser/wordOperations'
 import { registerQMLLanguage } from '../utils/qmlLang'
 import { showQMLChildHelp, showQMLContextHelp } from '../utils/qmlCompletion'
+import { registerQMLFormatter, formatQML } from '../utils/qmlFormatter'
 import { useI18n } from '../i18n'
 
 // Configure Monaco Editor workers to load from CDN
@@ -23,6 +26,10 @@ interface EditorPanelProps {
   onChange: (value: string) => void
   isLight: boolean
   readOnly: boolean
+}
+
+export interface EditorPanelHandle {
+  format: () => void
 }
 
 function isQmlPropertyColon(model: monaco.editor.ITextModel, position: monaco.Position): boolean {
@@ -59,7 +66,7 @@ function isQmlPropertyColon(model: monaco.editor.ITextModel, position: monaco.Po
     /^\s*(?:(?:readonly|default)\s+)?property\s+(?:alias|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s+[A-Za-z_]\w*\s*:$/.test(linePrefix)
 }
 
-export default function EditorPanel({ code, onChange, isLight, readOnly }: EditorPanelProps) {
+export default forwardRef<EditorPanelHandle, EditorPanelProps>(function EditorPanel({ code, onChange, isLight, readOnly }, ref) {
   const { locale, t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null)
@@ -75,8 +82,30 @@ export default function EditorPanel({ code, onChange, isLight, readOnly }: Edito
     replace: t('editor.replace'),
   }
 
+  useImperativeHandle(ref, () => ({
+    format: () => {
+      const editor = editorRef.current
+      if (editor) {
+        const model = editor.getModel()
+        if (model) {
+          const source = model.getValue()
+          const formatted = formatQML(source)
+          if (formatted !== source) {
+            const fullRange = model.getFullModelRange()
+            editor.executeEdits('format', [{
+              range: fullRange,
+              text: formatted,
+              forceMoveMarkers: true,
+            }])
+          }
+        }
+      }
+    }
+  }))
+
   useEffect(() => {
     registerQMLLanguage()
+    registerQMLFormatter()
   }, [])
 
   useEffect(() => {
@@ -96,6 +125,7 @@ export default function EditorPanel({ code, onChange, isLight, readOnly }: Edito
       showFoldingControls: 'mouseover',
       quickSuggestions: { other: true, comments: false, strings: false },
       suggestOnTriggerCharacters: true,
+      occurrencesHighlight: 'singleFile',
       tabCompletion: 'on',
       snippetSuggestions: 'top',
       fixedOverflowWidgets: true,
@@ -219,4 +249,4 @@ export default function EditorPanel({ code, onChange, isLight, readOnly }: Edito
       <div ref={containerRef} className="editor-container" />
     </div>
   )
-}
+})

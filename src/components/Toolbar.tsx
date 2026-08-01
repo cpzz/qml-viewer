@@ -1,5 +1,5 @@
 import React from 'react'
-import { PanelRightOpen, PanelLeftOpen, FilePlus, File, FolderOpen, Save, RefreshCw, ScanEye, Scan, Eye, EyeOff, Sun, Moon, Languages, Globe, Captions, CaptionsOff, Palette } from 'lucide-react'
+import { PanelRightOpen, PanelLeftOpen, FilePlus, File, FolderOpen, Save, RefreshCw, ScanEye, Scan, Eye, EyeOff, Sun, Moon, Languages, Globe, Captions, CaptionsOff, Palette, TextInitial } from 'lucide-react'
 import { useI18n } from '../i18n'
 import { qmlControlStyles, type QmlControlStyle } from '../runtime/QmlControlStyle'
 
@@ -13,6 +13,7 @@ interface ToolbarProps {
   onOpenDirectory: () => void
   onSave: () => void
   onRefresh: () => void
+  onFormat: () => void
   hasChanges: boolean
   canRefresh: boolean
   showFileList: boolean
@@ -25,7 +26,7 @@ interface ToolbarProps {
   onToggleLogPanel: () => void
 }
 
-export default function Toolbar({ isLight, onToggleTheme, qmlControlStyle, onQmlControlStyleChange, onNew, onOpenFiles, onOpenDirectory, onSave, onRefresh, hasChanges, canRefresh, showFileList, onToggleFileList, showEditor, onToggleEditor, showPreview, onTogglePreview, showLogPanel, onToggleLogPanel }: ToolbarProps) {
+export default function Toolbar({ isLight, onToggleTheme, qmlControlStyle, onQmlControlStyleChange, onNew, onOpenFiles, onOpenDirectory, onSave, onRefresh, onFormat, hasChanges, canRefresh, showFileList, onToggleFileList, showEditor, onToggleEditor, showPreview, onTogglePreview, showLogPanel, onToggleLogPanel }: ToolbarProps) {
   const { t, locale, toggleLocale } = useI18n()
 
   return (
@@ -58,6 +59,10 @@ export default function Toolbar({ isLight, onToggleTheme, qmlControlStyle, onQml
       </button>
       <button className="tool-btn" onClick={onToggleLogPanel} title={t(showLogPanel ? 'toolbar.hideLogPanel' : 'toolbar.showLogPanel')}>
         {showLogPanel ? <CaptionsOff size={18} /> : <Captions size={18} />}
+      </button>
+      <div className="toolbar-separator" />
+      <button className="tool-btn" onClick={onFormat} title={t('toolbar.format')}>
+        <TextInitial size={18} />
       </button>
       <div className="toolbar-spacer" />
       <label className="qml-style-picker" title={t('toolbar.controlStyle')}>

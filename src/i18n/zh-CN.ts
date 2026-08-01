@@ -17,6 +17,7 @@ export default {
     theme: '切换明亮/暗色模式',
     controlStyle: 'QML 控件风格',
     language: 'Swith to English',
+    format: '格式化代码',
   },
   fileExplorer: {
     files: '文件',

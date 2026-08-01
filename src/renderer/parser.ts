@@ -19,6 +19,8 @@ export interface QMLNode {
   /** Inline JS function declarations inside element body */
   methods?: Record<string, string>
   signals?: Record<string, QMLSignalDeclaration>
+  /** `Behavior on <property>` 的目标属性名 */
+  behaviorOn?: string
 }
 
 export interface QMLSignalDeclaration {
@@ -382,8 +384,17 @@ function parseRawValue(s: string, pos: number): [string, number] | null {
       else if (ch === ']') bracketDepth = Math.max(0, bracketDepth - 1)
       else if (ch === '(') parenDepth++
       else if (ch === ')') parenDepth = Math.max(0, parenDepth - 1)
-        else if (ch === ';' && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) break
-      else if ((ch === '\n' || ch === '\r') && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) break
+      else if (ch === ';' && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) break
+      else if ((ch === '\n' || ch === '\r') && braceDepth === 0 && bracketDepth === 0 && parenDepth === 0) {
+        // 行尾以运算符/左括号结尾说明表达式未完成，跨行继续；否则表达式结束
+        let prev = pos - 1
+        while (prev >= start && /\s/.test(s[prev])) prev--
+        if (prev >= start && /[?:+\-*/%|&=<>,.([{]/.test(s[prev])) {
+          pos++
+          continue
+        }
+        break
+      }
     }
 
     pos++
@@ -455,17 +466,29 @@ function parseElement(s: string, pos: number, lineStarts: number[]): [QMLNode, n
   const name = matchIdentifier(s, pos)
   if (!name) return null
 
+  // `Behavior on <property> { ... }`：Behavior 后跟随 on <目标属性名>
+  let nextPos = pos + name.length
+  let behaviorOn: string | undefined
+  if (name === 'Behavior') {
+    const onMatch = s.slice(nextPos).match(/^on\s+([A-Za-z_]\w*)\s*/)
+    if (onMatch) {
+      behaviorOn = onMatch[1]
+      nextPos += onMatch[0].length
+    }
+  }
+
   // Must be followed by {
-  pos = skipWS(s, pos + name.length)
-  if (pos >= s.length || s[pos] !== '{') return null
+  nextPos = skipWS(s, nextPos)
+  if (nextPos >= s.length || s[nextPos] !== '{') return null
 
   const node: QMLNode = {
     type: name,
     properties: {},
     children: [],
+    ...(behaviorOn ? { behaviorOn } : {}),
   }
 
-  pos++ // skip {
+  pos = nextPos + 1 // skip {
   let depth = 1
 
   while (pos < s.length && depth > 0) {

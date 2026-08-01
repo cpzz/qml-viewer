@@ -1,3 +1,4 @@
+import { parseQmlColor, toQmlColorString, type QmlColorTuple } from './QmlColor'
 import { QmlObject } from './QmlObject'
 
 export interface QmlAnimationScheduler {
@@ -13,6 +14,34 @@ export interface QmlAnimation {
 
 export type QmlEasingFunction = (progress: number) => number
 
+const pi = Math.PI
+
+/** Qt OutIn 组合：前一半用 out，后一半用 in */
+function outIn(out: QmlEasingFunction, easeIn: QmlEasingFunction): QmlEasingFunction {
+  return progress => progress < 0.5
+    ? 0.5 * out(2 * progress)
+    : 0.5 * easeIn(2 * progress - 1) + 0.5
+}
+
+function easeOutElastic(t: number): number {
+  const p = 0.3
+  return 2 ** (-10 * t) * Math.sin((t - p / 4) * (2 * pi) / p) + 1
+}
+
+function easeOutBounce(t: number): number {
+  if (t < 1 / 2.75) return 7.5625 * t * t
+  if (t < 2 / 2.75) {
+    const y = t - 1.5 / 2.75
+    return 7.5625 * y * y + 0.75
+  }
+  if (t < 2.5 / 2.75) {
+    const y = t - 2.25 / 2.75
+    return 7.5625 * y * y + 0.9375
+  }
+  const y = t - 2.625 / 2.75
+  return 7.5625 * y * y + 0.984375
+}
+
 export const QmlEasing = {
   Linear: (progress: number) => progress,
   InQuad: (progress: number) => progress * progress,
@@ -20,16 +49,121 @@ export const QmlEasing = {
   InOutQuad: (progress: number) => progress < 0.5
     ? 2 * progress * progress
     : 1 - Math.pow(-2 * progress + 2, 2) / 2,
+  OutInQuad: outIn(p => 1 - (1 - p) * (1 - p), p => p * p),
   InCubic: (progress: number) => progress ** 3,
   OutCubic: (progress: number) => 1 - (1 - progress) ** 3,
   InOutCubic: (progress: number) => progress < 0.5
     ? 4 * progress ** 3
     : 1 - Math.pow(-2 * progress + 2, 3) / 2,
+  OutInCubic: outIn(p => 1 - (1 - p) ** 3, p => p ** 3),
+  InQuart: (progress: number) => progress ** 4,
+  OutQuart: (progress: number) => 1 - (1 - progress) ** 4,
+  InOutQuart: (progress: number) => progress < 0.5
+    ? 8 * progress ** 4
+    : 1 - Math.pow(-2 * progress + 2, 4) / 2,
+  OutInQuart: outIn(p => 1 - (1 - p) ** 4, p => p ** 4),
+  InQuint: (progress: number) => progress ** 5,
+  OutQuint: (progress: number) => 1 - (1 - progress) ** 5,
+  InOutQuint: (progress: number) => progress < 0.5
+    ? 16 * progress ** 5
+    : 1 - Math.pow(-2 * progress + 2, 5) / 2,
+  OutInQuint: outIn(p => 1 - (1 - p) ** 5, p => p ** 5),
+  InSine: (progress: number) => 1 - Math.cos(progress * pi / 2),
+  OutSine: (progress: number) => Math.sin(progress * pi / 2),
+  InOutSine: (progress: number) => -(Math.cos(pi * progress) - 1) / 2,
+  OutInSine: outIn(p => Math.sin(p * pi / 2), p => 1 - Math.cos(p * pi / 2)),
+  InExpo: (progress: number) => progress === 0 ? 0 : 2 ** (10 * progress - 10),
+  OutExpo: (progress: number) => progress === 1 ? 1 : 1 - 2 ** (-10 * progress),
+  InOutExpo: (progress: number) => progress === 0
+    ? 0
+    : progress === 1
+      ? 1
+      : progress < 0.5
+        ? 2 ** (20 * progress - 10) / 2
+        : (2 - 2 ** (-20 * progress + 10)) / 2,
+  OutInExpo: outIn(p => p === 1 ? 1 : 1 - 2 ** (-10 * p), p => p === 0 ? 0 : 2 ** (10 * p - 10)),
+  InCirc: (progress: number) => 1 - Math.sqrt(1 - progress * progress),
+  OutCirc: (progress: number) => Math.sqrt(1 - (progress - 1) ** 2),
+  InOutCirc: (progress: number) => progress < 0.5
+    ? (1 - Math.sqrt(1 - 4 * progress * progress)) / 2
+    : (Math.sqrt(1 - Math.pow(-2 * progress + 2, 2)) + 1) / 2,
+  OutInCirc: outIn(p => Math.sqrt(1 - (p - 1) ** 2), p => 1 - Math.sqrt(1 - p * p)),
+  InElastic: (progress: number) => {
+    const p = 0.3
+    return 2 ** (10 * (progress - 1)) * Math.sin((progress - 1 - p / 4) * (2 * pi) / p)
+  },
+  OutElastic: easeOutElastic,
+  InOutElastic: (progress: number) => {
+    const p = 0.45
+    if (progress < 0.5) {
+      return 0.5 * 2 ** (10 * (2 * progress - 1)) * Math.sin((2 * progress - 1 - p / 4) * (2 * pi) / p)
+    }
+    return 0.5 * 2 ** (-10 * (2 * progress - 1)) * Math.sin((2 * progress - 1 - p / 4) * (2 * pi) / p) + 1
+  },
+  OutInElastic: outIn(easeOutElastic, progress => {
+    const p = 0.3
+    return 2 ** (10 * (progress - 1)) * Math.sin((progress - 1 - p / 4) * (2 * pi) / p)
+  }),
+  InBack: (progress: number) => {
+    const overshoot = 1.70158
+    return (progress - 1) * (progress - 1) * ((overshoot + 1) * (progress - 1) + overshoot) + 1
+  },
   OutBack: (progress: number) => {
     const overshoot = 1.70158
     return 1 + (overshoot + 1) * (progress - 1) ** 3 + overshoot * (progress - 1) ** 2
   },
+  InOutBack: (progress: number) => {
+    let overshoot = 1.70158
+    if (progress < 0.5) {
+      overshoot *= 1.525
+      const t = 2 * progress
+      return 0.5 * (t * t * ((overshoot + 1) * t - overshoot))
+    }
+    overshoot *= 1.525
+    const t = 2 * progress - 2
+    return 0.5 * (t * t * ((overshoot + 1) * t + overshoot) + 2)
+  },
+  OutInBack: outIn(
+    (progress: number) => {
+      const overshoot = 1.70158
+      return 1 + (overshoot + 1) * (progress - 1) ** 3 + overshoot * (progress - 1) ** 2
+    },
+    (progress: number) => {
+      const overshoot = 1.70158
+      return (progress - 1) * (progress - 1) * ((overshoot + 1) * (progress - 1) + overshoot) + 1
+    },
+  ),
+  InBounce: (progress: number) => 1 - easeOutBounce(1 - progress),
+  OutBounce: easeOutBounce,
+  InOutBounce: (progress: number) => progress < 0.5
+    ? (1 - easeOutBounce(1 - 2 * progress)) / 2
+    : (1 + easeOutBounce(2 * progress - 1)) / 2,
+  OutInBounce: outIn(easeOutBounce, progress => 1 - easeOutBounce(1 - progress)),
 } satisfies Record<string, QmlEasingFunction>
+
+/** 按 QEasingCurve::Type 枚举索引取 easing 函数 */
+export const QML_EASING_BY_INDEX: QmlEasingFunction[] = [
+  QmlEasing.Linear,
+  QmlEasing.InQuad, QmlEasing.OutQuad, QmlEasing.InOutQuad, QmlEasing.OutInQuad,
+  QmlEasing.InCubic, QmlEasing.OutCubic, QmlEasing.InOutCubic, QmlEasing.OutInCubic,
+  QmlEasing.InQuart, QmlEasing.OutQuart, QmlEasing.InOutQuart, QmlEasing.OutInQuart,
+  QmlEasing.InQuint, QmlEasing.OutQuint, QmlEasing.InOutQuint, QmlEasing.OutInQuint,
+  QmlEasing.InSine, QmlEasing.OutSine, QmlEasing.InOutSine, QmlEasing.OutInSine,
+  QmlEasing.InExpo, QmlEasing.OutExpo, QmlEasing.InOutExpo, QmlEasing.OutInExpo,
+  QmlEasing.InCirc, QmlEasing.OutCirc, QmlEasing.InOutCirc, QmlEasing.OutInCirc,
+  QmlEasing.InElastic, QmlEasing.OutElastic, QmlEasing.InOutElastic, QmlEasing.OutInElastic,
+  QmlEasing.InBack, QmlEasing.OutBack, QmlEasing.InOutBack, QmlEasing.OutInBack,
+  QmlEasing.InBounce, QmlEasing.OutBounce, QmlEasing.InOutBounce, QmlEasing.OutInBounce,
+]
+
+/** 将 QML 中的 easing.type 值（Easing 枚举数字或 'Easing.Xxx' 字符串）解析为 easing 函数 */
+export function resolveQmlEasing(value: unknown): QmlEasingFunction {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0 && value < QML_EASING_BY_INDEX.length) {
+    return QML_EASING_BY_INDEX[value]
+  }
+  const name = String(value ?? '').split('.').pop() ?? ''
+  return (QmlEasing as Record<string, QmlEasingFunction>)[name] ?? QmlEasing.Linear
+}
 
 const browserScheduler: QmlAnimationScheduler = {
   now: () => performance.now(),
@@ -137,15 +271,7 @@ export class QmlKeyframeAnimation implements QmlAnimation {
   }
 }
 
-function parseColor(value: unknown): number[] | null {
-  const match = String(value).match(/^#([0-9a-f]{6}|[0-9a-f]{8})$/i)
-  if (!match) return null
-  return match[1].match(/.{2}/g)!.map(component => parseInt(component, 16))
-}
-
-function colorString(value: number[]): string {
-  return `#${value.map(component => Math.round(component).toString(16).padStart(2, '0')).join('')}`
-}
+// CSS 命名颜色已迁移到 QmlColor.ts；QML 颜色解析见 parseQmlColor/toQmlColorString
 
 export interface QmlValueAnimationOptions {
   target: QmlObject
@@ -168,8 +294,8 @@ export class QmlValueAnimation implements QmlAnimation {
     const scheduler = this.options.scheduler ?? browserScheduler
     const duration = Math.max(0, this.options.duration ?? 250)
     const originalFrom = this.options.from ?? this.options.target.getProperty(this.options.property)
-    const fromColor = parseColor(originalFrom)
-    const toColor = parseColor(this.options.to)
+    const fromColor = parseQmlColor(originalFrom)
+    const toColor = parseQmlColor(this.options.to)
     const fromVector = Array.isArray(originalFrom) ? originalFrom.map(Number) : null
     const toVector = Array.isArray(this.options.to) ? this.options.to.map(Number) : null
     if ((!fromColor || !toColor) && (!fromVector || !toVector || fromVector.length !== toVector.length)) {
@@ -185,7 +311,7 @@ export class QmlValueAnimation implements QmlAnimation {
         const progress = duration === 0 ? 1 : Math.min(1, Math.max(0, (timestamp - startedAt) / duration))
         const eased = easing(progress)
         const value = from.map((component, index) => component + (to[index] - component) * eased)
-        this.options.target.setProperty(this.options.property, fromColor ? colorString(value) : value)
+        this.options.target.setProperty(this.options.property, fromColor ? toQmlColorString(value as QmlColorTuple) : value)
         if (progress >= 1) {
           this.frame = null
           this.resolve = null

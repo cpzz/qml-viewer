@@ -5,6 +5,7 @@ import {
   QmlPropertyAnimation,
   QmlSequentialAnimation,
   QmlValueAnimation,
+  resolveQmlEasing,
   type QmlAnimation,
   type QmlAnimationScheduler,
 } from './QmlAnimation'
@@ -114,6 +115,7 @@ export class QmlAnimationController {
         from: object.getProperty('from'),
         to: object.getProperty('to'),
         duration: Number(object.getProperty('duration')),
+        easing: resolveQmlEasing(object.getProperty('easing.type')),
         scheduler: this.scheduler,
       }
       return object.typeName === 'ColorAnimation' || object.typeName === 'Vector3dAnimation'

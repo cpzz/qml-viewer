@@ -116,6 +116,23 @@ describe('QmlExecutionEnvironment', () => {
     expect(environment.evaluate('contentItem.text', root)).toBe('Hello World')
   })
 
+  it('resolves the control reference to the nearest ancestor with a background property', () => {
+    const { root, field, environment } = createEnvironment()
+    root.defineProperty({ name: 'background', type: 'Item', initialValue: null })
+    root.defineProperty({ name: 'progress', type: 'real', initialValue: 0.5 })
+
+    // field 自身没有 background → control 解析到最近的 Control 祖先（root）
+    expect(environment.evaluate('control.progress', field)).toBe(0.5)
+
+    // 更内层出现带 background 的控件时，control 应指向最近的祖先
+    const inner = new QmlObject('Button', root)
+    inner.defineProperty({ name: 'background', type: 'Item', initialValue: null })
+    inner.defineProperty({ name: 'progress', type: 'real', initialValue: 0.25 })
+    const rect = new QmlObject('Rectangle', inner)
+    expect(environment.evaluate('control.progress', rect)).toBe(0.25)
+    expect(environment.evaluate('control.progress', inner)).toBe(0.25)
+  })
+
   it('awaits asynchronous host functions and propagates rejections', async () => {
     const { root, environment } = createEnvironment({
       loadCount: async (offset: unknown) => 10 + Number(offset),

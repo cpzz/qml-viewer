@@ -3,6 +3,7 @@ import {
   shouldInterruptAfterDeadline,
   type QuickJSWASMModule,
 } from 'quickjs-emscripten'
+import { parseQmlColor, qmlHslToRgb, qmlHsvToRgb, toQmlColorString, type QmlColorTuple } from './QmlColor'
 
 export interface QmlJsEngineOptions {
   memoryLimitBytes?: number
@@ -177,6 +178,158 @@ export class QmlJsEngine {
       }
       context.setProp(context.global, 'console', consoleHandle)
       consoleHandle.dispose()
+
+      // Register Qt namespace constants
+      const qtHandle = context.newObject()
+      // setProp 的 value 参数必须是 QuickJSHandle（Lifetime），
+      // 传裸数字会让 value.value 为 undefined，WASM 层将其当作 0。
+      const setNumber = (name: string, value: number) => {
+        context.newNumber(value).consume(handle => context.setProp(qtHandle, name, handle))
+      }
+      // CheckState
+      setNumber('Unchecked', 0)
+      setNumber('PartiallyChecked', 1)
+      setNumber('Checked', 2)
+      // Alignment
+      setNumber('AlignLeft', 1)
+      setNumber('AlignRight', 2)
+      setNumber('AlignHCenter', 4)
+      setNumber('AlignTop', 32)
+      setNumber('AlignBottom', 128)
+      setNumber('AlignVCenter', 64)
+      setNumber('AlignCenter', 68) // AlignHCenter | AlignVCenter
+      // Orientation
+      setNumber('Horizontal', 1)
+      setNumber('Vertical', 2)
+      // FocusPolicy
+      setNumber('NoFocus', 0)
+      setNumber('TabFocus', 1)
+      setNumber('ClickFocus', 2)
+      setNumber('StrongFocus', 11) // TabFocus | ClickFocus
+      setNumber('WheelFocus', 4)
+      // MouseButton
+      setNumber('LeftButton', 1)
+      setNumber('RightButton', 2)
+      setNumber('MiddleButton', 4)
+      // Edge
+      setNumber('LeftEdge', 1)
+      setNumber('RightEdge', 2)
+      setNumber('TopEdge', 4)
+      setNumber('BottomEdge', 8)
+
+      // Register Qt color helper functions (QML color value type)
+      const installQtFunction = (name: string, fn: (values: unknown[]) => unknown) => {
+        const handle = context.newFunction(name, (...args) => {
+          const values = args.map(arg => {
+            const type = context.typeof(arg)
+            if (type === 'number') return context.getNumber(arg)
+            if (type === 'string') return context.getString(arg)
+            if (type === 'boolean') return context.getBoolean(arg)
+            return context.dump(arg)
+          })
+          const result = fn(values)
+          // Qt 颜色函数以值语义直接参与表达式求值（不经 __value/JSON.parse 解包），
+          // 必须返回原始类型句柄。stringify 会多包一层引号（"#aarrggbb"），
+          // 导致绑定求值结果是带引号字符串，parseQmlColor 解析失败 → 颜色失效。
+          if (typeof result === 'string') return context.newString(result)
+          if (typeof result === 'boolean') return context.newBoolean(result)
+          if (typeof result === 'number') return context.newNumber(result)
+          return context.newString(stringify(result))
+        })
+        context.setProp(qtHandle, name, handle)
+        handle.dispose()
+      }
+      const requireColor = (value: unknown): QmlColorTuple => {
+        const color = parseQmlColor(value)
+        if (!color) throw new Error(`Invalid QML color value: ${String(value)}`)
+        return color
+      }
+      // Qt.rgba(r, g, b, a) — 各分量 0-1 浮点
+      installQtFunction('rgba', values => {
+        const [r = 0, g = 0, b = 0, a = 1] = values.map(Number)
+        return toQmlColorString([r * 255, g * 255, b * 255, a * 255])
+      })
+      // Qt.rgb(r, g, b) — 各分量 0-1 浮点，alpha 为 1
+      installQtFunction('rgb', values => {
+        const [r = 0, g = 0, b = 0] = values.map(Number)
+        return toQmlColorString([r * 255, g * 255, b * 255, 255])
+      })
+      // Qt.hsva(h, s, v, a) — HSV 模型，各分量 0-1
+      installQtFunction('hsva', values => {
+        const [h = 0, s = 0, v = 0, a = 1] = values.map(Number)
+        const [r, g, b] = qmlHsvToRgb(h, s, v)
+        return toQmlColorString([r * 255, g * 255, b * 255, a * 255])
+      })
+      // Qt.hsla(h, s, l, a) — HSL 模型，各分量 0-1
+      installQtFunction('hsla', values => {
+        const [h = 0, s = 0, l = 0, a = 1] = values.map(Number)
+        const [r, g, b] = qmlHslToRgb(h, s, l)
+        return toQmlColorString([r * 255, g * 255, b * 255, a * 255])
+      })
+      // Qt.darker(color, factor) — 默认 factor 2.0，按 1/factor 变暗
+      installQtFunction('darker', values => {
+        const [r, g, b, a] = requireColor(values[0])
+        const scale = 1 / Math.max(0, Number(values[1] ?? 2))
+        return toQmlColorString([r * scale, g * scale, b * scale, a])
+      })
+      // Qt.lighter(color, factor) — 默认 factor 1.5，按 factor 变亮
+      installQtFunction('lighter', values => {
+        const [r, g, b, a] = requireColor(values[0])
+        const scale = Math.max(0, Number(values[1] ?? 1.5))
+        return toQmlColorString([
+          Math.min(255, r * scale), Math.min(255, g * scale), Math.min(255, b * scale), a,
+        ])
+      })
+      // Qt.tint(color, tintColor) — 用 tintColor 的 alpha 混合
+      installQtFunction('tint', values => {
+        const [r1, g1, b1, a1] = requireColor(values[0])
+        const [r2, g2, b2, a2] = requireColor(values[1])
+        const mix = a2 / 255
+        return toQmlColorString([
+          r1 * (1 - mix) + r2 * mix,
+          g1 * (1 - mix) + g2 * mix,
+          b1 * (1 - mix) + b2 * mix,
+          a1 * (1 - mix) + a2,
+        ])
+      })
+      // Qt.colorEqual(color1, color2) — 解析后比较颜色是否相等
+      installQtFunction('colorEqual', values => {
+        const first = requireColor(values[0])
+        const second = requireColor(values[1])
+        return first.every((component, index) => Math.abs(component - second[index]) < 0.5)
+      })
+
+      context.setProp(context.global, 'Qt', qtHandle)
+      qtHandle.dispose()
+
+      // Register qsTr() global function (returns input string as-is, no actual translation)
+      const qsTrHandle = context.newFunction('qsTr', (...args) => {
+        if (args.length === 0) return context.newString('')
+        return context.newString(context.getString(args[0]))
+      })
+      context.setProp(context.global, 'qsTr', qsTrHandle)
+      qsTrHandle.dispose()
+
+      // Register Easing namespace constants (QEasingCurve::Type values)
+      const easingHandle = context.newObject()
+      const easingTypes: Record<string, number> = {
+        Linear: 0,
+        InQuad: 1, OutQuad: 2, InOutQuad: 3, OutInQuad: 4,
+        InCubic: 5, OutCubic: 6, InOutCubic: 7, OutInCubic: 8,
+        InQuart: 9, OutQuart: 10, InOutQuart: 11, OutInQuart: 12,
+        InQuint: 13, OutQuint: 14, InOutQuint: 15, OutInQuint: 16,
+        InSine: 17, OutSine: 18, InOutSine: 19, OutInSine: 20,
+        InExpo: 21, OutExpo: 22, InOutExpo: 23, OutInExpo: 24,
+        InCirc: 25, OutCirc: 26, InOutCirc: 27, OutInCirc: 28,
+        InElastic: 29, OutElastic: 30, InOutElastic: 31, OutInElastic: 32,
+        InBack: 33, OutBack: 34, InOutBack: 35, OutInBack: 36,
+        InBounce: 37, OutBounce: 38, InOutBounce: 39, OutInBounce: 40,
+      }
+      for (const [name, value] of Object.entries(easingTypes)) {
+        context.newNumber(value).consume(handle => context.setProp(easingHandle, name, handle))
+      }
+      context.setProp(context.global, 'Easing', easingHandle)
+      easingHandle.dispose()
 
       install('__qmlGetContext', name => bridge.getContextProperty(name))
       install('__qmlSetContext', (name, value) => bridge.setContextProperty(name, JSON.parse(value)))

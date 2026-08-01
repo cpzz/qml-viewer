@@ -2,6 +2,7 @@ import type { QMLNode } from '../renderer/parser'
 import { BindingEngine } from './BindingEngine'
 import type { QmlAnimationScheduler } from './QmlAnimation'
 import { isDeclarativeAnimation, QmlAnimationController } from './QmlAnimationController'
+import { resolveQmlEasing } from './QmlAnimation'
 import { createBuiltinQmlTypeRegistry } from './BuiltinQmlTypes'
 import { QmlExecutionEnvironment } from './QmlExecutionEnvironment'
 import type { QmlJsEngine } from './QmlJsEngine'
@@ -12,7 +13,7 @@ import { QmlRepeaterController } from './QmlRepeaterController'
 import { QmlShortcutController } from './QmlShortcutController'
 import { QmlScope } from './QmlScope'
 import { QmlStackViewController } from './QmlStackViewController'
-import { QmlStateMachine } from './QmlStateMachine'
+import { QmlBehavior, QmlStateMachine } from './QmlStateMachine'
 import { QmlTimerController } from './QmlTimerController'
 import type { QmlTypeRegistry } from './QmlTypeRegistry'
 
@@ -85,6 +86,7 @@ function instantiateNode(
   const factoryDocument = registry.getFactoryDocument(object)
   if (factoryDocument) nestedDocuments.push(factoryDocument)
   nodeObjects.set(node, object)
+  if (node.behaviorOn) object.setInternalProperty('behaviorOn', node.behaviorOn)
   const declarations = node.propertyDeclarations ?? {}
 
   if (node.type === 'ListElement') {
@@ -269,6 +271,16 @@ function isStaticLiteral(source: string): boolean {
   }
 }
 
+/**
+ * Whether a binding source is a function expression (e.g. `function() { ... }` or an arrow function).
+ * Such values cannot round-trip through the QuickJS bridge, so they are stored as callable wrappers.
+ */
+function isFunctionExpression(source: string): boolean {
+  const trimmed = source.trim()
+  if (/^(?:async\s+)?function\b/.test(trimmed)) return true
+  return trimmed.includes('=>')
+}
+
 export function activateQmlDocument(
   nodes: QMLNode[],
   jsEngine: QmlJsEngine,
@@ -287,124 +299,150 @@ export function activateQmlDocument(
   const timerControllers: QmlTimerController[] = []
   const shortcutControllers: QmlShortcutController[] = []
   const animationControllers: QmlAnimationController[] = []
+  const behaviorControllers: QmlBehavior[] = []
   const stackViewControllers: QmlStackViewController[] = []
 
   const activateInstance = (instance: QmlDocumentInstance, instanceExecution: QmlExecutionEnvironment) => {
-  const flattenedNodes = instance.nodes.flatMap(function flatten(current): QMLNode[] {
-    return [
-      current,
-      ...current.children.flatMap(flatten),
-      ...Object.entries(current.blockProperties ?? {})
-        .filter(([name]) => name !== 'delegate')
-        .flatMap(([, child]) => flatten(child)),
-      ...Object.values(current.objectListProperties ?? {}).flatMap(list => list.flatMap(flatten)),
-    ]
-  })
-  const methodSources = new Map<QmlObject, string[]>()
-  const visibleMethodDeclarations = (context: QmlObject): string => {
-    const hierarchy: QmlObject[] = []
-    let current: QmlObject | null = context
-    while (current) {
-      hierarchy.unshift(current)
-      current = current.parent
-    }
-    return hierarchy.flatMap(object => methodSources.get(object) ?? []).join('\n')
-  }
-
-  for (const node of flattenedNodes) {
-    const object = instance.nodeObjects.get(node)!
-    const delegate = object.hasProperty('delegate') ? object.getProperty('delegate') as InlineDelegateFactory | null : null
-    if (delegate && typeof delegate.create === 'function') {
-      delegate.activate = created => activateInstance(created, new QmlExecutionEnvironment(jsEngine, created.scope))
-    }
-    methodSources.set(object, Object.values(node.methods ?? {}))
-
-    for (const [name, source] of Object.entries(node.methods ?? {})) {
-      object.defineMethod(name, (...args) => instanceExecution.call(
-        `function (...__qmlArgs) { ${visibleMethodDeclarations(object)}; return (${source})(...__qmlArgs); }`,
-        args,
-        object,
-      ))
-    }
-  }
-
-  for (const node of flattenedNodes) {
-    const object = instance.nodeObjects.get(node)!
-    const execute = (body: string, locals: Record<string, unknown> = {}) => {
-      instanceExecution.execute(`${visibleMethodDeclarations(object)}\n${body}`, object, locals)
-    }
-
-    const expressions = new Map<string, string>()
-    for (const declaration of Object.values(node.propertyDeclarations ?? {})) {
-      if (declaration.type !== 'alias' && declaration.value !== undefined) {
-        expressions.set(declaration.name, declaration.value)
+    const flattenedNodes = instance.nodes.flatMap(function flatten(current): QMLNode[] {
+      return [
+        current,
+        ...current.children.flatMap(flatten),
+        ...Object.entries(current.blockProperties ?? {})
+          .filter(([name]) => name !== 'delegate')
+          .flatMap(([, child]) => flatten(child)),
+        ...Object.values(current.objectListProperties ?? {}).flatMap(list => list.flatMap(flatten)),
+      ]
+    })
+    const methodSources = new Map<QmlObject, string[]>()
+    const visibleMethodDeclarations = (context: QmlObject): string => {
+      const hierarchy: QmlObject[] = []
+      let current: QmlObject | null = context
+      while (current) {
+        hierarchy.unshift(current)
+        current = current.parent
       }
+      return hierarchy.flatMap(object => methodSources.get(object) ?? []).join('\n')
     }
-    for (const [name, source] of Object.entries(node.properties)) {
-      if (name !== 'id' && !/^on[A-Z]/.test(name) && name !== 'Component.onCompleted') {
-        expressions.set(name, source)
+
+    for (const node of flattenedNodes) {
+      const object = instance.nodeObjects.get(node)!
+      const delegate = object.hasProperty('delegate') ? object.getProperty('delegate') as InlineDelegateFactory | null : null
+      if (delegate && typeof delegate.create === 'function') {
+        delegate.activate = created => activateInstance(created, new QmlExecutionEnvironment(jsEngine, created.scope))
       }
-    }
-    for (const [name, expression] of expressions) {
-      if (node.type === 'PropertyChanges' && name === 'target') continue
-      if (isStaticLiteral(expression) || node.literalProperties?.[name]) continue
-      if (object.getPropertyType(name) === 'date' && /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(expression.trim())) continue
-      const directObject = /^[A-Za-z_$][\w$]*$/.test(expression.trim())
-        ? instance.scope.resolveId(expression.trim())
-        : undefined
-      if (directObject) {
-        bindings.bind(object, name, () => directObject)
-        continue
-      }
-      try {
-        instanceExecution.evaluate(expression, object)
-        bindings.bind(object, name, () => instanceExecution.evaluate(expression, object))
-      } catch {
-        bindings.unbind(object, name)
+      methodSources.set(object, Object.values(node.methods ?? {}))
+
+      for (const [name, source] of Object.entries(node.methods ?? {})) {
+        const callable = (...args: unknown[]) => {
+          return instanceExecution.call(
+            `function (...__qmlArgs) { ${visibleMethodDeclarations(object)}; return (${source})(...__qmlArgs); }`,
+            args,
+            object,
+          )
+        }
+        // 函数值属性（如 CheckBox.nextCheckState）：Qt 中该名字是持有函数的属性，
+        // 解析器将其归入 methods，这里改写到属性值上，使 getProperty() 能拿到可调用函数。
+        if (object.hasProperty(name)) {
+          object.setInternalProperty(name, callable)
+        } else {
+          object.defineMethod(name, callable)
+        }
       }
     }
 
-    for (const [name, source] of Object.entries(node.properties)) {
-      if (name === 'Component.onCompleted') {
-        completedHandlers.push(() => execute(handlerBody(source)))
-        continue
+    for (const node of flattenedNodes) {
+      const object = instance.nodeObjects.get(node)!
+      const execute = (body: string, locals: Record<string, unknown> = {}) => {
+        instanceExecution.execute(`${visibleMethodDeclarations(object)}\n${body}`, object, locals)
       }
-      const signalName = handlerSignalName(name)
-      if (!signalName || !object.hasSignal(signalName)) continue
-      const parameters = node.signals?.[signalName]?.parameters ?? []
-      disconnectors.push(object.connectSignal(signalName, (...args) => {
-        const locals = Object.fromEntries(parameters.map((parameter, index) => (
-          [parameter.name, args[index]]
-        )))
-        execute(handlerBody(source), locals)
-      }))
-    }
 
-    if (node.type === 'Connections' && object.getProperty('enabled')) {
-      const targetValue = object.getProperty('target')
-      const target = targetValue instanceof QmlObject
-        ? targetValue
-        : instance.scope.resolveId(node.properties.target?.trim() ?? String(targetValue))
-      if (target instanceof QmlObject) {
-        object.setInternalProperty('target', target)
-        const handlerNames = new Set([
-          ...Object.keys(node.methods ?? {}).filter(name => /^on[A-Z]/.test(name)),
-          ...Object.keys(node.properties).filter(name => /^on[A-Z]/.test(name)),
-        ])
-        handlerNames.forEach(name => {
-          const signalName = handlerSignalName(name)
-          if (!signalName || !target.hasSignal(signalName)) return
-          disconnectors.push(target.connectSignal(signalName, (...args) => {
-            if (object.hasMethod(name)) object.callMethod(name, ...args)
-            else execute(handlerBody(node.properties[name]))
-          }))
-        })
+      const expressions = new Map<string, string>()
+      for (const declaration of Object.values(node.propertyDeclarations ?? {})) {
+        if (declaration.type !== 'alias' && declaration.value !== undefined) {
+          expressions.set(declaration.name, declaration.value)
+        }
+      }
+      for (const [name, source] of Object.entries(node.properties)) {
+        if (name !== 'id' && !/^on[A-Z]/.test(name) && name !== 'Component.onCompleted') {
+          expressions.set(name, source)
+        }
+      }
+      for (const [name, expression] of expressions) {
+        if (node.type === 'PropertyChanges' && name === 'target') continue
+        if (isStaticLiteral(expression) || node.literalProperties?.[name]) continue
+        if (object.getPropertyType(name) === 'date' && /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(expression.trim())) continue
+        // Function expressions (e.g. `nextCheckState: function() { ... }`) cannot round-trip
+        // through the QuickJS bridge (dump() drops functions), so expose a callable wrapper
+        // that compiles the source on each invocation.
+        if (isFunctionExpression(expression)) {
+          const source = expression
+          object.setInternalProperty(name, (...args: unknown[]) => instanceExecution.call(
+            `function (...__qmlArgs) { ${visibleMethodDeclarations(object)}; return (${source})(...__qmlArgs); }`,
+            args,
+            object,
+          ))
+          continue
+        }
+        const directObject = /^[A-Za-z_$][\w$]*$/.test(expression.trim())
+          ? instance.scope.resolveId(expression.trim())
+          : undefined
+        if (directObject) {
+          bindings.bind(object, name, () => directObject)
+          continue
+        }
+        try {
+          instanceExecution.evaluate(expression, object)
+          bindings.bind(object, name, () => instanceExecution.evaluate(expression, object))
+        } catch {
+          bindings.unbind(object, name)
+        }
+      }
+
+      for (const [name, source] of Object.entries(node.properties)) {
+        if (name === 'Component.onCompleted') {
+          completedHandlers.push(() => execute(handlerBody(source)))
+          continue
+        }
+        const signalName = handlerSignalName(name)
+        if (!signalName || !object.hasSignal(signalName)) continue
+        const parameters = node.signals?.[signalName]?.parameters ?? []
+        disconnectors.push(object.connectSignal(signalName, (...args) => {
+          const locals = Object.fromEntries(parameters.map((parameter, index) => (
+            [parameter.name, args[index]]
+          )))
+          try {
+            execute(handlerBody(source), locals)
+          } catch (error) {
+            console.error(`Signal handler ${name} error:`, error)
+          }
+        }))
+      }
+
+      if (node.type === 'Connections' && object.getProperty('enabled')) {
+        const targetValue = object.getProperty('target')
+        const target = targetValue instanceof QmlObject
+          ? targetValue
+          : instance.scope.resolveId(node.properties.target?.trim() ?? String(targetValue))
+        if (target instanceof QmlObject) {
+          object.setInternalProperty('target', target)
+          const handlerNames = new Set([
+            ...Object.keys(node.methods ?? {}).filter(name => /^on[A-Z]/.test(name)),
+            ...Object.keys(node.properties).filter(name => /^on[A-Z]/.test(name)),
+          ])
+          handlerNames.forEach(name => {
+            const signalName = handlerSignalName(name)
+            if (!signalName || !target.hasSignal(signalName)) return
+            disconnectors.push(target.connectSignal(signalName, (...args) => {
+              if (object.hasMethod(name)) object.callMethod(name, ...args)
+              else execute(handlerBody(node.properties[name]))
+            }))
+          })
+        }
       }
     }
-  }
-  for (const nested of instance.nestedDocuments) {
-    activateInstance(nested, new QmlExecutionEnvironment(jsEngine, nested.scope))
-  }
+    for (const nested of instance.nestedDocuments) {
+      activateInstance(nested, new QmlExecutionEnvironment(jsEngine, nested.scope))
+    }
   }
 
   activateInstance(document, execution)
@@ -440,6 +478,21 @@ export function activateQmlDocument(
         shortcutControllers.push(new QmlShortcutController(object, options.shortcutEventTarget))
       } else if (isDeclarativeAnimation(object)) {
         animationControllers.push(new QmlAnimationController(object, options.animationScheduler))
+      } else if (object.typeName === 'Behavior' && object.parent) {
+        const behaviorOn = object.getProperty('behaviorOn')
+        if (typeof behaviorOn === 'string' && behaviorOn && object.parent.hasProperty(behaviorOn)) {
+          const animation = object.children.find(isDeclarativeAnimation)
+          behaviorControllers.push(new QmlBehavior({
+            target: object.parent,
+            property: behaviorOn,
+            duration: animation ? Number(animation.getProperty('duration')) : undefined,
+            easing: animation ? resolveQmlEasing(animation.getProperty('easing.type')) : undefined,
+            scheduler: options.animationScheduler,
+            valueType: animation?.typeName === 'ColorAnimation'
+              ? 'color' as const
+              : animation?.typeName === 'Vector3dAnimation' ? 'vector' as const : 'number' as const,
+          }))
+        }
       } else if (object.typeName === 'StackView') {
         stackViewControllers.push(new QmlStackViewController(object))
       }
@@ -527,6 +580,7 @@ export function activateQmlDocument(
       timerControllers.forEach(controller => controller.dispose())
       shortcutControllers.forEach(controller => controller.dispose())
       animationControllers.forEach(controller => controller.dispose())
+      behaviorControllers.forEach(controller => controller.dispose())
       stackViewControllers.forEach(controller => controller.dispose())
       bindings.dispose()
       stateMachines.forEach(machine => machine.stop())

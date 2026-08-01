@@ -76,6 +76,15 @@ export class QmlExecutionEnvironment {
         propertyOwners.set(name, object)
       }
     }
+    // Qt Quick Controls 的 `control` 引用：指向最近的外层 Control 对象
+    // （Control 系控件才有 background 属性，普通 Item/Rectangle 没有）
+    let controlObject: QmlObject | null = null
+    for (let index = hierarchy.length - 1; index >= 0; index--) {
+      if (hierarchy[index].hasProperty('background')) {
+        controlObject = hierarchy[index]
+        break
+      }
+    }
     const getObject = (id: string) => {
       const object = objects.get(id)
       if (!object) throw new Error(`Unknown QML id ${id}`)
@@ -106,9 +115,11 @@ export class QmlExecutionEnvironment {
       scope: Object.fromEntries(Object.entries(locals).map(([name, value]) => [name, toScriptValue(value)])),
       objectIds: [...ids.keys()],
       hostFunctions: Object.keys(allHostFunctions),
-      contextProperties: [...propertyOwners.keys(), 'parent'],
+      contextProperties: [...propertyOwners.keys(), 'parent', ...(controlObject ? ['control'] : [])],
       getContextProperty: name => toBridgeValue(
-        name === 'parent' ? context.parent : propertyOwners.get(name)?.getProperty(name),
+        name === 'parent' ? context.parent
+          : name === 'control' ? controlObject
+            : propertyOwners.get(name)?.getProperty(name),
       ),
       setContextProperty: (name, value) => propertyOwners.get(name)?.setProperty(name, value),
       getObjectMemberKind: (id, name) => {
