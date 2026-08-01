@@ -92,10 +92,20 @@ export class QmlExecutionEnvironment {
       return { __qmlObjectId: id }
     }
 
+    const allHostFunctions = {
+      ...this.hostFunctions,
+      __qmlConsole: (method: string, args: unknown[]) => {
+        if (typeof window !== 'undefined') {
+          window.postMessage({ type: 'qml-preview-log', level: method, args, timestamp: Date.now() }, '*')
+        }
+        return null
+      },
+    }
+
     return {
       scope: Object.fromEntries(Object.entries(locals).map(([name, value]) => [name, toScriptValue(value)])),
       objectIds: [...ids.keys()],
-      hostFunctions: Object.keys(this.hostFunctions),
+      hostFunctions: Object.keys(allHostFunctions),
       contextProperties: [...propertyOwners.keys(), 'parent'],
       getContextProperty: name => toBridgeValue(
         name === 'parent' ? context.parent : propertyOwners.get(name)?.getProperty(name),
@@ -113,7 +123,7 @@ export class QmlExecutionEnvironment {
       callObjectMethod: (id, name, args) => toBridgeValue(getObject(id).callMethod(name, ...args)),
       emitObjectSignal: (id, name, args) => getObject(id).emitSignal(name, ...args),
       callHostFunction: (name, args) => {
-        const hostFunction = this.hostFunctions[name]
+        const hostFunction = allHostFunctions[name]
         if (!hostFunction) throw new Error(`Unknown QML host function ${name}`)
         return hostFunction(...args)
       },

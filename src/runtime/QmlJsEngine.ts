@@ -163,6 +163,21 @@ export class QmlJsEngine {
     }
 
     try {
+      const consoleHandle = context.newObject()
+      for (const method of ['log', 'warn', 'error', 'info', 'debug'] as const) {
+        const fn = context.newFunction(`console_${method}`, (...args) => {
+          const values = args.map(arg => {
+            try { return context.dump(arg) } catch { return context.getString(arg) }
+          })
+          bridge.callHostFunction('__qmlConsole', [method, values])
+          return null
+        })
+        context.setProp(consoleHandle, method, fn)
+        fn.dispose()
+      }
+      context.setProp(context.global, 'console', consoleHandle)
+      consoleHandle.dispose()
+
       install('__qmlGetContext', name => bridge.getContextProperty(name))
       install('__qmlSetContext', (name, value) => bridge.setContextProperty(name, JSON.parse(value)))
       install('__qmlMemberKind', (id, name) => bridge.getObjectMemberKind(id, name))
