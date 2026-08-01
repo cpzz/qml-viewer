@@ -866,6 +866,16 @@ body {
 .qml-runtime-root [data-qml-type="TableView"] > [role="columnheader"] {
   background: var(--qml-panel-muted-bg);
   font-weight: 600;
+  border-bottom: 2px solid var(--qml-accent);
+}
+
+.qml-runtime-root [data-qml-type="HorizontalHeaderView"] {
+  display: flex;
+  border: 1px solid var(--qml-control-border);
+  border-bottom: 2px solid var(--qml-accent);
+  background: var(--qml-panel-muted-bg);
+  font-weight: 600;
+  gap: 0;
 }
 
 .qml-runtime-root [data-qml-type="TreeView"] > [role="treeitem"] {

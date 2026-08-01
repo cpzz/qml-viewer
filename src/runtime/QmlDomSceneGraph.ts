@@ -226,6 +226,7 @@ export class QmlDomSceneGraph {
     mountParent.append(element)
 
     const unsubscribe = object.getPropertyNames().map(name => object.onPropertyChanged(name, () => {
+      if (name === 'activeFocus') return
       this.updateBranch(object)
       if (name === 'item' || name === 'background' || name === 'contentItem') this.syncChildren(object, element)
     }))
@@ -740,9 +741,11 @@ export class QmlDomSceneGraph {
     if (object.typeName === 'TreeView') this.projectTreeView(object, element)
     if (object.typeName === 'HorizontalHeaderView' || object.typeName === 'VerticalHeaderView') {
       const syncView = object.getProperty('syncView')
-      const headers = syncView instanceof QmlObject ? syncView.getProperty('headers') : []
-      element.textContent = Array.isArray(headers) ? headers.map(cssValue).join(object.typeName === 'VerticalHeaderView' ? '\n' : ' | ') : ''
-      style.whiteSpace = 'pre'
+      if (syncView instanceof QmlObject) {
+        const headers = syncView.getProperty('headers')
+        element.textContent = Array.isArray(headers) ? headers.map(cssValue).join(object.typeName === 'VerticalHeaderView' ? '\n' : ' | ') : ''
+        style.whiteSpace = 'pre'
+      }
     }
     if (element instanceof this.domDocument.defaultView!.HTMLSelectElement && object.typeName === 'ComboBox') {
       const model = object.getProperty('model')
@@ -883,7 +886,12 @@ export class QmlDomSceneGraph {
     const widths = Array.isArray(configuredWidths) ? configuredWidths.map(Number) : []
     element.setAttribute('role', 'grid')
     element.style.display = 'grid'
-    element.style.gridTemplateColumns = columns.map((_, index) => widths[index] > 0 ? `${widths[index]}px` : 'minmax(0, 1fr)').join(' ')
+    element.style.gridTemplateColumns = columns.map((_, index) => {
+      if (widths[index] > 0) {
+        return index === columns.length - 1 ? `minmax(${widths[index]}px, 1fr)` : `${widths[index]}px`
+      }
+      return 'minmax(0, 1fr)'
+    }).join(' ')
     const cells: HTMLElement[] = []
     labels.forEach((label, index) => {
       const header = this.domDocument.createElement('div')
