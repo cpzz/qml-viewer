@@ -63,6 +63,7 @@ export default function App() {
   const [showEditor, setShowEditor] = useState(true)
   const [showPreview, setShowPreview] = useState(true)
   const [showLogPanel, setShowLogPanel] = useState(false)
+  const [inspectorOpen, setInspectorOpen] = useState(false)
   const [logPanelHeight, setLogPanelHeight] = useState(180)
   const [isDraggingLogDivider, setIsDraggingLogDivider] = useState(false)
   const [fileListWidth, setFileListWidth] = useState(200)
@@ -823,6 +824,8 @@ export default function App() {
         onTogglePreview={handleTogglePreview}
         showLogPanel={showLogPanel}
         onToggleLogPanel={handleToggleLogPanel}
+        inspectorOpen={inspectorOpen}
+        onToggleInspector={() => setInspectorOpen(!inspectorOpen)}
       />
       <div
         ref={containerRef}
@@ -853,7 +856,7 @@ export default function App() {
           right={(
             <div ref={previewStackRef} className={`preview-stack${isDraggingLogDivider ? ' preview-stack-dragging' : ''}`}>
               <div className="preview-stack-main">
-                <PreviewPanel code={code} isLight={isLight} qmlControlStyle={qmlControlStyle} filePath={activeTab?.path} />
+                <PreviewPanel code={code} isLight={isLight} qmlControlStyle={qmlControlStyle} filePath={activeTab?.path} inspectorOpen={inspectorOpen} onToggleInspector={() => setInspectorOpen(!inspectorOpen)} />
               </div>
               {showLogPanel && (
                 <>

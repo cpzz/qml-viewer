@@ -18,6 +18,8 @@ export default {
     controlStyle: 'QML 控件风格',
     language: 'Swith to English',
     format: '格式化代码',
+    inspectRuntime: '检查运行时对象',
+    closeInspectRuntime: '关闭运行时检查',
   },
   fileExplorer: {
     files: '文件',

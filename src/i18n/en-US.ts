@@ -18,6 +18,8 @@ export default {
     controlStyle: 'QML control style',
     language: '切换到中文',
     format: 'Format code',
+    inspectRuntime: 'Inspect runtime objects',
+    closeInspectRuntime: 'Close runtime inspector',
   },
   fileExplorer: {
     files: 'FILES',

@@ -1,5 +1,4 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Braces, X } from 'lucide-react'
 import { parseQMLDocument } from '../renderer/parser'
 import { createBuiltinQmlTypeRegistry } from '../runtime/BuiltinQmlTypes'
 import { activateQmlDocument, type ActiveQmlDocument } from '../runtime/QmlDocument'
@@ -16,6 +15,8 @@ interface PreviewPanelProps {
   isLight: boolean
   qmlControlStyle: QmlControlStyle
   filePath?: string | null
+  inspectorOpen?: boolean
+  onToggleInspector?: () => void
 }
 
 const PREVIEW_UPDATE_DELAY_MS = 200
@@ -53,22 +54,16 @@ function directoryName(filePath: string): string {
   return separator < 0 ? '.' : filePath.slice(0, separator)
 }
 
-export default function PreviewPanel({ code, isLight, qmlControlStyle, filePath }: PreviewPanelProps) {
+export default function PreviewPanel({ code, isLight, qmlControlStyle, filePath, inspectorOpen = false, onToggleInspector }: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   const activeRef = useRef<{ document: ActiveQmlDocument; scene: QmlDomSceneGraph } | null>(null)
   const versionRef = useRef(0)
   const inspectorOpenRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
-  const [inspectorOpen, setInspectorOpen] = useState(false)
   const [snapshot, setSnapshot] = useState<QmlInspectionSnapshot | null>(null)
 
   const toggleInspector = () => {
-    setInspectorOpen(open => {
-      const nextOpen = !open
-      inspectorOpenRef.current = nextOpen
-      if (nextOpen && activeRef.current) setSnapshot(inspectQmlDocument(activeRef.current.document))
-      return nextOpen
-    })
+    if (onToggleInspector) onToggleInspector()
   }
 
   useEffect(() => {
@@ -140,6 +135,11 @@ export default function PreviewPanel({ code, isLight, qmlControlStyle, filePath 
     activeRef.current = null
   }, [])
 
+  useEffect(() => {
+    inspectorOpenRef.current = inspectorOpen
+    if (inspectorOpen && activeRef.current) setSnapshot(inspectQmlDocument(activeRef.current.document))
+  }, [inspectorOpen])
+
   return (
     <div className={`preview-panel${isLight ? ' light' : ''}`}>
       <div className="preview-content">
@@ -148,15 +148,6 @@ export default function PreviewPanel({ code, isLight, qmlControlStyle, filePath 
           className="qml-runtime-surface"
           data-qml-style={qmlControlStyleAttribute(qmlControlStyle)}
         />
-        <button
-          className="preview-inspector-toggle"
-          type="button"
-          title={inspectorOpen ? 'Close runtime inspector' : 'Inspect runtime objects'}
-          aria-label={inspectorOpen ? 'Close runtime inspector' : 'Inspect runtime objects'}
-          onClick={toggleInspector}
-        >
-          {inspectorOpen ? <X size={16} /> : <Braces size={16} />}
-        </button>
         {inspectorOpen && snapshot && (
           <aside className="preview-inspector" aria-label="Runtime object inspector">
             <header>

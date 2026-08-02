@@ -810,7 +810,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   { name: 'MenuItem', baseType: 'Button', properties: [property('shortcut', 'string', '')] },
   { name: 'MenuSeparator', baseType: 'Item', properties: [property('implicitHeight', 'real', 1, { readonly: true })] },
   { name: 'MenuBar', baseType: 'Control' },
-  { name: 'ToolBar', baseType: 'Control', properties: [property('implicitHeight', 'real', 40, { readonly: true })] },
+  { name: 'ToolBar', baseType: 'Control' },
   {
     name: 'Action',
     baseType: 'QtObject',
