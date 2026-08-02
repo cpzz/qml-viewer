@@ -25,6 +25,7 @@ export default {
     files: 'FILES',
     dropFiles: 'Drop files here',
     remove: 'Remove',
+    refresh: 'Refresh directory',
     loading: 'Loading...',
     emptyDirectory: 'Empty directory',
   },

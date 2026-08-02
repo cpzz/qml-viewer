@@ -94,7 +94,10 @@ ipcMain.handle('file:openDirectory', async () => {
 
   if (result.canceled || result.filePaths.length === 0) return []
 
-  return await listQmlFilesInDirectory(result.filePaths[0])
+  // 返回目录项本身，让用户可以展开查看
+  const dirPath = result.filePaths[0]
+  const dirName = dirPath.split(/[\\/]/).pop() || 'directory'
+  return [{ name: dirName, path: dirPath, type: 'directory' }]
 })
 
 ipcMain.handle('file:save', async (_event, content: string, filePath?: string) => {

@@ -1391,6 +1391,15 @@ body {
   background: var(--toolbar-btn-bg);
 }
 
+.file-tree-item.active {
+  background: var(--accent-primary);
+  color: white;
+}
+
+.file-tree-item.active:hover {
+  background: var(--accent-hover);
+}
+
 .file-tree-icon {
   width: 16px;
   display: flex;
@@ -1422,6 +1431,7 @@ body {
   margin-left: 4px;
 }
 
+.file-tree-refresh,
 .file-tree-remove {
   display: none;
   align-items: center;
@@ -1437,10 +1447,12 @@ body {
   flex-shrink: 0;
 }
 
+.file-tree-item:hover .file-tree-refresh,
 .file-tree-item:hover .file-tree-remove {
   display: flex;
 }
 
+.file-tree-refresh:hover,
 .file-tree-remove:hover {
   background: rgba(255, 255, 255, 0.15);
   color: var(--text-primary);

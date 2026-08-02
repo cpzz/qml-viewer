@@ -80,6 +80,7 @@ export default function App() {
   const browserFileStoreRef = useRef<Map<string, string>>(new Map())
   const browserFileHandleRef = useRef<Map<string, any>>(new Map())
   const browserDirectoryHandlesRef = useRef<any[]>([])
+  const browserDirectoryHandleMapRef = useRef<Map<string, any>>(new Map())
   const tabFileHandleRef = useRef<Map<string, any>>(new Map())
   filesRef.current = files
 
@@ -271,7 +272,15 @@ export default function App() {
         if (handle.kind === 'directory') {
           if (await hasMatchingDirectoryHandle(handle)) continue
           browserDirectoryHandlesRef.current.push(handle)
-          await walkDir(handle, handle.name || '')
+          // 添加目录项本身，而不是递归遍历文件
+          const dirPath = `web:/${handle.name || 'directory'}`
+          // 存储目录 handle 以便后续展开时读取
+          browserDirectoryHandleMapRef.current.set(dirPath, handle)
+          loadedItems.push({
+            name: handle.name || 'directory',
+            path: dirPath,
+            type: 'directory',
+          })
         } else if (handle.kind === 'file') {
           await loadFileHandle(handle)
         }
@@ -321,30 +330,40 @@ export default function App() {
     if (!window.electronAPI?.onFilesDropped) return
     window.electronAPI.onFilesDropped(async (paths) => {
       const results = await window.electronAPI!.statBatch(paths)
+
+      // 分离目录和文件
+      const dirItems = results.filter(item => item.type === 'directory')
       const qmlItems = results.filter(item => item.type === 'file' && item.name.toLowerCase().endsWith('.qml'))
-      if (qmlItems.length === 0) return
 
-      addFileItems(qmlItems)
-
-      const first = qmlItems[0]
-      const currentFiles = filesRef.current
-      const existing = currentFiles.find(f => f.path === first.path)
-      if (existing) {
-        setActiveId(existing.id)
-        return
+      // 添加目录项
+      if (dirItems.length > 0) {
+        addFileItems(dirItems)
       }
 
-      const content = await window.electronAPI!.readFileByPath(first.path)
-      if (!content) return
-      const tab: FileTab = {
-        id: 'tab-' + (_tabId++),
-        name: first.name,
-        path: first.path,
-        content: content.content,
-        originalContent: content.content,
+      // 添加文件项
+      if (qmlItems.length > 0) {
+        addFileItems(qmlItems)
+
+        const first = qmlItems[0]
+        const currentFiles = filesRef.current
+        const existing = currentFiles.find(f => f.path === first.path)
+        if (existing) {
+          setActiveId(existing.id)
+          return
+        }
+
+        const content = await window.electronAPI!.readFileByPath(first.path)
+        if (!content) return
+        const tab: FileTab = {
+          id: 'tab-' + (_tabId++),
+          name: first.name,
+          path: first.path,
+          content: content.content,
+          originalContent: content.content,
+        }
+        setFiles(prev => [...prev, tab])
+        setActiveId(tab.id)
       }
-      setFiles(prev => [...prev, tab])
-      setActiveId(tab.id)
     })
   }, [addFileItems])
 
@@ -407,31 +426,14 @@ export default function App() {
     const root = await picker()
     if (await hasMatchingDirectoryHandle(root)) return []
     browserDirectoryHandlesRef.current.push(root)
-    const results: Array<{ name: string; path: string; type: 'file' | 'directory' }> = []
 
-    const walk = async (dirHandle: any, prefix: string) => {
-      for await (const entry of dirHandle.values()) {
-        const nextPrefix = prefix ? `${prefix}/${entry.name}` : entry.name
-        if (entry.kind === 'directory') {
-          await walk(entry, nextPrefix)
-          continue
-        }
-        if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.qml')) {
-          const loaded = await loadWebFileHandle(entry, `web:/${nextPrefix}`)
-          if (loaded) {
-            results.push({
-              name: loaded.filePath.split(/[\\/]/).pop() || entry.name,
-              path: loaded.filePath,
-              type: 'file',
-            })
-          }
-        }
-      }
-    }
+    // 返回目录项本身，让用户可以展开查看
+    const dirPath = `web:/${root.name || 'directory'}`
+    // 存储目录 handle 以便后续展开时读取
+    browserDirectoryHandleMapRef.current.set(dirPath, root)
 
-    await walk(root, '')
-    return results
-  }, [hasMatchingDirectoryHandle, loadWebFileHandle])
+    return [{ name: root.name || 'directory', path: dirPath, type: 'directory' as const }]
+  }, [hasMatchingDirectoryHandle])
 
   const saveTab = useCallback(async (tab: FileTab): Promise<boolean> => {
     if (!window.electronAPI?.saveFile) {
@@ -468,7 +470,11 @@ export default function App() {
         )
       )
       browserFileStoreRef.current.set(pathToSave, tab.content)
-      addFileItems([{ name: handle.name || tab.name, path: pathToSave, type: 'file' }])
+      // 只有顶层路径（web:/name.qml）才加入全局文件树；
+      // 目录内文件（路径含 /）由目录展开时动态加载，加入会导致顶层出现重复同名项
+      if (!pathToSave.slice('web:/'.length).includes('/')) {
+        addFileItems([{ name: handle.name || tab.name, path: pathToSave, type: 'file' }])
+      }
       return true
     }
 
@@ -535,23 +541,78 @@ export default function App() {
   }, [ensureCurrentSavedBeforeSwitch, openPathInTab])
 
   const handleRemoveFileItem = useCallback((path: string) => {
-    browserFileStoreRef.current.delete(path)
-    browserFileHandleRef.current.delete(path)
+    // 删除目录时，需要删除所有子路径
+    const pathPrefix = path.endsWith('/') ? path : path + '/'
+    const isDirectory = fileItems.some(i => i.path === path && i.type === 'directory')
+
+    // 收集所有需要删除的路径（包括 fileItems 中的项和子项路径）
+    const pathsToRemove = isDirectory
+      ? fileItems.filter(i => i.path === path || i.path.startsWith(pathPrefix)).map(i => i.path)
+      : [path]
+
+    // 始终包含被删除的路径本身（子项路径可能不在 fileItems 中）
+    if (!pathsToRemove.includes(path)) {
+      pathsToRemove.push(path)
+    }
+
+    // 如果是目录，先从映射中获取 handle，再从 browserDirectoryHandlesRef 中移除
+    if (isDirectory) {
+      const dirHandle = browserDirectoryHandleMapRef.current.get(path)
+      if (dirHandle) {
+        browserDirectoryHandlesRef.current = browserDirectoryHandlesRef.current.filter(
+          (h: any) => h !== dirHandle
+        )
+      }
+    }
+
+    // 删除浏览器文件存储和目录 handle 映射（包括所有子路径）
+    for (const p of pathsToRemove) {
+      browserFileStoreRef.current.delete(p)
+      browserFileHandleRef.current.delete(p)
+      browserDirectoryHandleMapRef.current.delete(p)
+    }
+
+    // 清理所有以 pathPrefix 开头的子路径数据
+    if (isDirectory) {
+      // 清理 browserFileStoreRef
+      for (const key of Array.from(browserFileStoreRef.current.keys())) {
+        if (key.startsWith(pathPrefix)) {
+          browserFileStoreRef.current.delete(key)
+        }
+      }
+      // 清理 browserFileHandleRef
+      for (const key of Array.from(browserFileHandleRef.current.keys())) {
+        if (key.startsWith(pathPrefix)) {
+          browserFileHandleRef.current.delete(key)
+        }
+      }
+      // 清理 browserDirectoryHandleMapRef
+      for (const key of Array.from(browserDirectoryHandleMapRef.current.keys())) {
+        if (key.startsWith(pathPrefix)) {
+          browserDirectoryHandleMapRef.current.delete(key)
+        }
+      }
+    }
+
+    // 删除标签页文件句柄
     for (const file of filesRef.current) {
-      if (file.path === path) {
+      if (file.path && pathsToRemove.some(p => file.path === p || file.path.startsWith(pathPrefix))) {
         tabFileHandleRef.current.delete(file.id)
       }
     }
-    setFileItems(prev => prev.filter(i => i.path !== path))
+
+    // 更新文件列表
+    setFileItems(prev => prev.filter(i => !pathsToRemove.includes(i.path)))
+
+    // 更新标签页：关闭所有路径匹配的标签页
     setFiles(prev => {
-      const toClose = prev.find(f => f.path === path)
-      if (toClose) {
-        const idx = prev.indexOf(toClose)
-        const next = prev.filter(f => f.path !== path)
-        if (toClose.id === activeId) {
+      const toClose = prev.filter(f => f.path && pathsToRemove.some(p => f.path === p || f.path!.startsWith(pathPrefix)))
+      if (toClose.length > 0) {
+        const next = prev.filter(f => !f.path || (!pathsToRemove.some(p => f.path === p) && !f.path.startsWith(pathPrefix)))
+        // 如果当前活动标签页被关闭，切换到其他标签页
+        if (toClose.some(f => f.id === activeId)) {
           if (next.length > 0) {
-            const newIdx = Math.min(idx, next.length - 1)
-            setTimeout(() => setActiveId(next[newIdx].id), 0)
+            setTimeout(() => setActiveId(next[0].id), 0)
           } else {
             setTimeout(() => setActiveId(null), 0)
           }
@@ -560,7 +621,45 @@ export default function App() {
       }
       return prev
     })
-  }, [activeId])
+  }, [activeId, fileItems])
+
+  const handleReadDirectory = useCallback(async (dirPath: string): Promise<FileItem[]> => {
+    // Electron 环境：使用 IPC 读取目录
+    if (window.electronAPI?.readDirectory) {
+      return await window.electronAPI.readDirectory(dirPath)
+    }
+
+    // Web 环境：通过 directory handle 读取
+    const dirHandle = browserDirectoryHandleMapRef.current.get(dirPath)
+    if (!dirHandle) return []
+
+    const results: FileItem[] = []
+    for await (const entry of (dirHandle as any).values()) {
+      if (entry.kind === 'directory') {
+        const childPath = `${dirPath}/${entry.name}`
+        // 存储子目录 handle 以便后续展开
+        browserDirectoryHandleMapRef.current.set(childPath, entry)
+        results.push({
+          name: entry.name,
+          path: childPath,
+          type: 'directory',
+        })
+      } else if (entry.kind === 'file' && entry.name.toLowerCase().endsWith('.qml')) {
+        const childPath = `${dirPath}/${entry.name}`
+        // 读取文件内容并缓存
+        const file = await entry.getFile()
+        const content = await file.text()
+        browserFileStoreRef.current.set(childPath, content)
+        browserFileHandleRef.current.set(childPath, entry)
+        results.push({
+          name: entry.name,
+          path: childPath,
+          type: 'file',
+        })
+      }
+    }
+    return results
+  }, [])
 
   // --- File operations ---
 
@@ -659,11 +758,20 @@ export default function App() {
     }
     if (!results || results.length === 0) return
 
-    const qmlFiles = results.filter(item => item.type === 'file' && item.name.toLowerCase().endsWith('.qml'))
-    if (qmlFiles.length === 0) return
+    // 添加目录项本身
+    const dirItems = results.filter(item => item.type === 'directory')
+    if (dirItems.length > 0) {
+      addFileItems(dirItems)
+    }
 
-    addFileItems(qmlFiles)
-    await openPathInTab(qmlFiles[0].path)
+    // 同时添加根目录下的 .qml 文件
+    const qmlFiles = results.filter(item => item.type === 'file' && item.name.toLowerCase().endsWith('.qml'))
+    if (qmlFiles.length > 0) {
+      addFileItems(qmlFiles)
+      await openPathInTab(qmlFiles[0].path)
+    } else if (dirItems.length > 0) {
+      // 如果没有文件，不需要自动打开任何标签页
+    }
   }, [addFileItems, openPathInTab, openWebDirectoryWithHandles])
 
   const handleSave = useCallback(async () => {
@@ -838,6 +946,8 @@ export default function App() {
                 items={fileItems}
                 onOpenFile={handleOpenFileFromExplorer}
                 onRemoveItem={handleRemoveFileItem}
+                onReadDirectory={handleReadDirectory}
+                activeFilePath={activeTab?.path}
               />
             </div>
             <div className="divider divider-fl" onMouseDown={handleFLMouseDown}>

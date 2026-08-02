@@ -25,6 +25,7 @@ export default {
     files: '文件',
     dropFiles: '拖放文件到此处',
     remove: '移除',
+    refresh: '刷新目录',
     loading: '正在加载...',
     emptyDirectory: '空目录',
   },
