@@ -209,19 +209,59 @@ function wordRange(model: monaco.editor.ITextModel, position: monaco.Position): 
   return new monaco.Range(position.lineNumber, word.startColumn, position.lineNumber, word.endColumn)
 }
 
+function propertyCompletionKind(item: QmlPropertyDefinition): monaco.languages.CompletionItemKind {
+  if (item.readOnly) return monaco.languages.CompletionItemKind.Constant
+  if (item.kind === 'handler') return monaco.languages.CompletionItemKind.Event
+  const kindMap: Record<string, monaco.languages.CompletionItemKind> = {
+    string: monaco.languages.CompletionItemKind.Text,
+    url: monaco.languages.CompletionItemKind.File,
+    number: monaco.languages.CompletionItemKind.Value,
+    boolean: monaco.languages.CompletionItemKind.Keyword,
+    color: monaco.languages.CompletionItemKind.Color,
+    enum: monaco.languages.CompletionItemKind.EnumMember,
+    array: monaco.languages.CompletionItemKind.Array,
+    model: monaco.languages.CompletionItemKind.Array,
+    component: monaco.languages.CompletionItemKind.Class,
+    date: monaco.languages.CompletionItemKind.Value,
+    time: monaco.languages.CompletionItemKind.Value,
+    expression: monaco.languages.CompletionItemKind.Variable,
+  }
+  return kindMap[item.kind] ?? monaco.languages.CompletionItemKind.Property
+}
+
 function propertyItems(properties: QmlPropertyDefinition[], range: monaco.Range): monaco.languages.CompletionItem[] {
-  return properties.filter(item => !item.readOnly).map(item => ({
+  return properties.map(item => {
+    const kind = propertyCompletionKind(item)
+    const detail = item.detail || `QML ${item.kind} property${item.readOnly ? ' [readonly]' : ''}`
+    const sortPrefix = item.readOnly ? '2-' : '1-'
+
+    return {
+      label: item.name,
+      kind,
+      detail,
+      // 只读属性兜底：即使混入也只插入名字，绝不自动加冒号
+      insertText: item.readOnly ? item.name : snippetForProperty(item),
+      insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+      range,
+      sortText: `${sortPrefix}${item.name}`,
+      command: !item.readOnly && ['color', 'boolean', 'enum', 'model', 'component'].includes(item.kind) ? {
+        id: 'editor.action.triggerSuggest',
+        title: 'Show property values',
+      } : undefined,
+    }
+  })
+}
+
+// 成员访问补全（`obj.` / `parent.` 之后）：显示所有属性（含只读，只读可读取），
+// 只插入属性名、不自动加冒号；只读属性用锁图标区分。
+function memberPropertyItems(properties: QmlPropertyDefinition[], range: monaco.Range): monaco.languages.CompletionItem[] {
+  return properties.map(item => ({
     label: item.name,
-    kind: item.kind === 'handler' ? monaco.languages.CompletionItemKind.Event : monaco.languages.CompletionItemKind.Property,
-    detail: item.detail || `QML ${item.kind} property`,
-    insertText: snippetForProperty(item),
-    insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+    kind: propertyCompletionKind(item),
+    insertText: item.name,
+    detail: item.detail || `QML ${item.kind} property${item.readOnly ? ' [readonly]' : ''}`,
     range,
-    sortText: `1-${item.name}`,
-    command: ['color', 'boolean', 'enum', 'model', 'component'].includes(item.kind) ? {
-      id: 'editor.action.triggerSuggest',
-      title: 'Show property values',
-    } : undefined,
+    sortText: `${item.readOnly ? '2-' : '1-'}${item.name}`,
   }))
 }
 
@@ -330,13 +370,7 @@ function referenceItems(values: string[], range: monaco.Range): monaco.languages
 function memberItems(typeName: string, range: monaco.Range): monaco.languages.CompletionItem[] {
   const definition = qmlTypeMap.get(typeName)
   if (!definition) return []
-  const properties = definition.properties.map(item => ({
-    label: item.name,
-    kind: monaco.languages.CompletionItemKind.Property,
-    insertText: item.name,
-    detail: item.readOnly ? `${typeName} read-only property` : `${typeName} property`,
-    range,
-  }))
+  const properties = memberPropertyItems(definition.properties, range)
   const methods = (definition.methods || []).map(method => ({
     label: method,
     kind: monaco.languages.CompletionItemKind.Method,
@@ -364,7 +398,7 @@ function parentMemberItems(context: QmlDocumentContext, range: monaco.Range): mo
         .filter(item => item.name.includes('.'))
         .map(item => item.name.split('.')[0]),
     )]
-    items.push(...propertyItems(directProperties, range).map(item => ({
+    items.push(...memberPropertyItems(directProperties, range).map(item => ({
       ...item,
       detail: `parent (${parent.type}) · ${item.detail}`,
     })))
@@ -462,7 +496,8 @@ function consoleMemberItems(range: monaco.Range): monaco.languages.CompletionIte
 function contextPropertyItems(typeName: string, range: monaco.Range): monaco.languages.CompletionItem[] {
   const definition = qmlTypeMap.get(typeName)
   if (!definition) return []
-  const directProperties = definition.properties.filter(item => !item.name.includes('.'))
+  // 绑定上下文：只读属性不能赋值，不显示
+  const directProperties = definition.properties.filter(item => !item.name.includes('.') && !item.readOnly)
   const propertyGroups = [...new Set(
     definition.properties
       .filter(item => item.name.includes('.'))
@@ -669,14 +704,28 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
       const memberMatch = linePrefix.match(/\b([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z0-9_]*)$/)
       if (memberMatch) {
         const owner = memberMatch[1]
+        // `myLabel.font.` 属于成员访问（读取语义），裸 `font.` 属于绑定位置
+        const isNestedMemberAccess = /\.$/.test(linePrefix.slice(0, memberMatch.index))
         const contextualGroup = context.currentType
           ? qmlTypeMap.get(context.currentType)?.properties
             .filter(item => item.name.startsWith(`${owner}.`))
             .map(item => ({ ...item, name: item.name.slice(owner.length + 1) }))
           : undefined
-        if (contextualGroup?.length) return { suggestions: propertyItems(contextualGroup, range) }
+        if (contextualGroup?.length) {
+          return {
+            suggestions: isNestedMemberAccess
+              ? memberPropertyItems(contextualGroup, range)
+              : propertyItems(contextualGroup.filter(item => !item.readOnly), range),
+          }
+        }
         if (owner === 'console') return { suggestions: consoleMemberItems(range) }
-        if (groupedProperties[owner]) return { suggestions: propertyItems(groupedProperties[owner], range) }
+        if (groupedProperties[owner]) {
+          return {
+            suggestions: isNestedMemberAccess
+              ? memberPropertyItems(groupedProperties[owner], range)
+              : propertyItems(groupedProperties[owner].filter(item => !item.readOnly), range),
+          }
+        }
         if (namespaceMembers[owner]) return { suggestions: valueItems(namespaceMembers[owner], range) }
         if (owner === 'parent') return { suggestions: parentMemberItems(context, range) }
         const idType = context.ids.get(owner)
@@ -787,7 +836,10 @@ export function registerQMLCompletionProvider(): monaco.IDisposable {
 
       if (context.currentType) {
         const definition = qmlTypeMap.get(context.currentType)
-        if (definition) suggestions.push(...propertyItems(definition.properties, range))
+        if (definition) {
+          // 绑定上下文：只读属性不能赋值，不显示
+          suggestions.push(...propertyItems(definition.properties.filter(item => !item.readOnly), range))
+        }
         suggestions.push(...qmlSyntaxSnippets.map(snippet => ({
           label: snippet.label,
           kind: monaco.languages.CompletionItemKind.Keyword,
