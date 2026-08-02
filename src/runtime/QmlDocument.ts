@@ -281,6 +281,25 @@ function isFunctionExpression(source: string): boolean {
   return trimmed.includes('=>')
 }
 
+/**
+ * anchors 锚线属性。这类属性的值通常是锚线引用（如 `parent.left`、
+ * `someId.right`），不是可求值的 JS 表达式：`parent.left` 经 QuickJS 求值会
+ * 静默得到 undefined（Item 只有扁平的 anchors.left 属性，没有 left 属性），
+ * 导致锚点全部失效。激活时保留字符串原值，由 SceneGraph 的
+ * resolveAnchorTarget 按锚线语法解析。
+ */
+const anchorLineProperties = new Set([
+  'anchors.fill',
+  'anchors.centerIn',
+  'anchors.left',
+  'anchors.right',
+  'anchors.top',
+  'anchors.bottom',
+  'anchors.horizontalCenter',
+  'anchors.verticalCenter',
+  'anchors.baseline',
+])
+
 export function activateQmlDocument(
   nodes: QMLNode[],
   jsEngine: QmlJsEngine,
@@ -370,6 +389,9 @@ export function activateQmlDocument(
       for (const [name, expression] of expressions) {
         if (node.type === 'PropertyChanges' && name === 'target') continue
         if (isStaticLiteral(expression) || node.literalProperties?.[name]) continue
+        // 锚线引用（anchors.left: parent.left 等）跳过 QuickJS 绑定求值：
+        // 求值会静默得到 undefined 导致锚点失效，保留字符串由 SceneGraph 解析。
+        if (anchorLineProperties.has(name) && /\./.test(expression.trim())) continue
         if (object.getPropertyType(name) === 'date' && /^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(expression.trim())) continue
         // Function expressions (e.g. `nextCheckState: function() { ... }`) cannot round-trip
         // through the QuickJS bridge (dump() drops functions), so expose a callable wrapper

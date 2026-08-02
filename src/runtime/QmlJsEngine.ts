@@ -377,6 +377,7 @@ export class QmlJsEngine {
           const __makeProxy = id => __objects[id] ?? (__objects[id] = new Proxy({}, {
             get(_target, name) {
               const member = String(name);
+              if (member === 'toJSON') return () => ({ __qmlObjectId: id });
               const kind = __parse(__qmlMemberKind(id, member));
               if (kind === 'property') return __value(__qmlGet(id, member));
               if (kind === 'method') return (...args) => __value(__qmlCall(id, member, JSON.stringify(args)));

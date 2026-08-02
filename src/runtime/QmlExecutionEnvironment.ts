@@ -1,5 +1,5 @@
 import { QmlJsEngine, type QmlJsLiveBridge, type QmlJsScope } from './QmlJsEngine'
-import { QmlObject } from './QmlObject'
+import { bridgeObjectId, QmlObject } from './QmlObject'
 import { QmlScope } from './QmlScope'
 
 export type QmlHostFunctions = Record<string, (...args: unknown[]) => unknown>
@@ -63,7 +63,6 @@ export class QmlExecutionEnvironment {
     const ids = this.scope.getVisibleIds()
     const objects = new Map(ids)
     const objectIds = new Map<QmlObject, string>([...ids].map(([id, object]) => [object, id]))
-    let nextObjectId = 1
     const propertyOwners = new Map<string, QmlObject>()
     const hierarchy: QmlObject[] = []
     let current: QmlObject | null = context
@@ -92,12 +91,11 @@ export class QmlExecutionEnvironment {
     }
     const toBridgeValue = (value: unknown): unknown => {
       if (!(value instanceof QmlObject)) return toScriptValue(value)
-      let id = objectIds.get(value)
-      if (!id) {
-        id = `__object${nextObjectId++}`
-        objectIds.set(value, id)
-        objects.set(id, value)
-      }
+      // 用全局稳定的桥接 id：绑定求值结果（{ __qmlObjectId }）存进属性后，
+      // SceneGraph 能反查回 QmlObject。局部 map 仍记录 id→对象，供
+      // getObject()（Proxy 的属性/方法访问）使用。
+      const id = bridgeObjectId(value)
+      if (!objects.has(id)) objects.set(id, value)
       return { __qmlObjectId: id }
     }
 

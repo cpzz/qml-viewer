@@ -2,13 +2,52 @@ import { parseQmlColor, toCssColor } from './QmlColor'
 import type { QmlDocumentInstance } from './QmlDocument'
 import { QmlCanvasContext } from './QmlCanvasContext'
 import { QmlEasing, resolveQmlEasing } from './QmlAnimation'
-import { QmlObject } from './QmlObject'
+import { bridgeObjectById, QmlObject } from './QmlObject'
 
 interface MountedNode {
   element: HTMLElement
   parent: QmlObject | null
   unsubscribe: Array<() => void>
   removeEvents: Array<() => void>
+  anchorUnsubscribe: Array<() => void>
+}
+
+/** 所有会触发几何重算的 anchors 锚定属性 */
+const anchorTargetProperties = [
+  'anchors.fill',
+  'anchors.centerIn',
+  'anchors.left',
+  'anchors.right',
+  'anchors.top',
+  'anchors.bottom',
+  'anchors.horizontalCenter',
+  'anchors.verticalCenter',
+  'anchors.baseline',
+] as const
+
+/**
+ * 解析锚定目标：属性值可能是
+ * - QmlObject（直接引用，如测试里的 setInternalProperty）
+ * - 'parent' / 'parent.left' 字符串（锚线引用，激活路径保留的原始值）
+ * - 'someId.right' 字符串（锚定文档中其他对象的锚线）
+ * - { __qmlObjectId } 标记（绑定求值后经 QuickJS 边界序列化的结果）
+ */
+function resolveAnchorTarget(value: unknown, parent: QmlObject | null, ids: ReadonlyMap<string, QmlObject> | null): QmlObject | null {
+  if (value instanceof QmlObject) return value
+  if (typeof value === 'string') {
+    // 'parent' / 'parent.left' → 父对象
+    if (value.startsWith('parent')) return parent
+    // 'someId.left' → 文档中 id 指向的对象（去掉锚线后缀）
+    const dotIndex = value.indexOf('.')
+    if (dotIndex > 0) {
+      return ids?.get(value.slice(0, dotIndex)) ?? null
+    }
+    return null
+  }
+  if (typeof value === 'object' && value !== null && typeof (value as { __qmlObjectId?: unknown }).__qmlObjectId === 'string') {
+    return bridgeObjectById((value as { __qmlObjectId: string }).__qmlObjectId) ?? null
+  }
+  return null
 }
 
 function cssLength(value: unknown): string {
@@ -24,6 +63,26 @@ function cssValue(value: unknown): string {
 function cssColor(value: unknown): string {
   const color = parseQmlColor(value)
   return color ? toCssColor(color) : ''
+}
+
+/**
+ * 解析继承属性（font.* 是 QML 继承属性）：从自身向上找第一个显式设置了
+ * 该子属性的对象；若都没有显式设置，返回自身（或最近祖先）的当前值。
+ */
+function resolveInheritedFontProperty(
+  object: QmlObject,
+  name: string,
+): unknown {
+  let current: QmlObject | null = object
+  let fallback: unknown
+  while (current) {
+    if (current.hasProperty(name)) {
+      if (current.isExplicitlySet(name)) return current.getProperty(name)
+      if (fallback === undefined) fallback = current.getProperty(name)
+    }
+    current = current.parent
+  }
+  return fallback
 }
 
 function modelRows(model: unknown): unknown[] {
@@ -57,13 +116,40 @@ function tagNameFor(object: QmlObject): keyof HTMLElementTagNameMap {
   return 'div'
 }
 
+/**
+ * 用浏览器 canvas 实测文本宽度（与渲染使用同一字体的真实度量，含可变宽度字符）。
+ * jsdom / 无 canvas 环境下返回 null，由调用方回退到近似估算。
+ */
+let textMeasureCanvas: HTMLCanvasElement | null = null
+function measureTextWidth(text: string, fontSize: number, fontFamily: string | undefined): number | null {
+  if (typeof document === 'undefined') return null
+  try {
+    textMeasureCanvas ??= document.createElement('canvas')
+    const ctx = textMeasureCanvas.getContext('2d')
+    if (!ctx || typeof ctx.measureText !== 'function') return null
+    ctx.font = `${fontSize}px ${fontFamily || 'sans-serif'}`
+    const width = ctx.measureText(text).width
+    return Number.isFinite(width) && width > 0 ? width : null
+  } catch {
+    return null
+  }
+}
+
 function contentImplicitSize(object: QmlObject): { width: number; height: number } | null {
   const text = object.hasProperty('text') ? cssValue(object.getProperty('text')) : ''
   if (object.typeName === 'Text' || object.typeName === 'Label') {
-    const fontSize = Number(object.getProperty('font.pixelSize')) || 16
+    const pixelSize = Number(resolveInheritedFontProperty(object, 'font.pixelSize')) || 0
+    const pointSize = Number(resolveInheritedFontProperty(object, 'font.pointSize')) || 0
+    const fontSize = pixelSize > 0 ? pixelSize : pointSize > 0 ? pointSize * 4 / 3 : 16
+    const fontFamily = cssValue(resolveInheritedFontProperty(object, 'font.family'))
     const lines = text.split('\n')
+    const measuredWidths = lines.map(line => measureTextWidth(line, fontSize, fontFamily))
+    const hasMeasured = measuredWidths.some(width => width !== null)
     return {
-      width: Math.ceil(Math.max(0, ...lines.map(line => line.length)) * fontSize * 0.6),
+      // 优先用真实度量（可变字体下 0.6×charCount 会高估宽度 → 右侧留白）；不可用时回退估算
+      width: hasMeasured
+        ? Math.ceil(Math.max(0, ...measuredWidths.map(width => width ?? 0)))
+        : Math.ceil(Math.max(0, ...lines.map(line => line.length)) * fontSize * 0.6),
       height: Math.ceil(Math.max(1, lines.length) * fontSize * 1.2),
     }
   }
@@ -87,6 +173,22 @@ function contentImplicitSize(object: QmlObject): { width: number; height: number
   if (object.typeName === 'StackLayout') return { width: 120, height: 24 }
   if (object.typeName === 'HorizontalHeaderView') return { width: 120, height: 30 }
   return null
+}
+
+// Qt 标准：Item.baselineOffset = 基线在局部坐标中的 y 偏移（默认 0，即基线在顶部）。
+// 文本控件（Text/Label）的 baselineOffset 为只读，≈ 字体 ascent（约 0.8 × fontSize）。
+// 用户显式设置的 baselineOffset 优先（Item 上可写）。
+function baselineOffsetFor(object: QmlObject): number {
+  if (object.isExplicitlySet('baselineOffset')) {
+    return Number(object.getProperty('baselineOffset')) || 0
+  }
+  if (object.typeName === 'Text' || object.typeName === 'Label') {
+    const pixelSize = Number(resolveInheritedFontProperty(object, 'font.pixelSize')) || 0
+    const pointSize = Number(resolveInheritedFontProperty(object, 'font.pointSize')) || 0
+    const fontSize = pixelSize > 0 ? pixelSize : pointSize > 0 ? pointSize * 4 / 3 : 16
+    return Math.round(fontSize * 0.8)
+  }
+  return 0
 }
 
 function focusPolicyAllows(policy: unknown, kind: 'tab' | 'click'): boolean {
@@ -128,11 +230,14 @@ export class QmlDomSceneGraph {
   private container: HTMLElement | null = null
   private overlay: HTMLElement | null = null
   private overlayRemoveEvents: Array<() => void> = []
+  /** 当前文档的 id → 对象映射，用于解析锚线引用（someId.left） */
+  private ids: ReadonlyMap<string, QmlObject> | null = null
 
   constructor(private readonly domDocument: Document) {}
 
   mount(document: QmlDocumentInstance, container: HTMLElement): void {
     this.dispose()
+    this.ids = document.ids
     this.container = container
     container.replaceChildren()
     container.classList.add('qml-runtime-root')
@@ -156,10 +261,15 @@ export class QmlDomSceneGraph {
       if (!popup || !popupPolicyAllows(popup.getProperty('closePolicy'), kind)) return
       popup.callMethod('close')
     }
-    const onOverlayPointer = (event: Event) => {
-      if (event.target !== this.overlay) return
-      closeTopPopup('outside')
-      event.stopPropagation()
+    // overlay 是 pointer-events: none 的透明层，点击事件会穿透到下层元素，
+    // 无法靠 overlay 自身接收事件。改为监听 container 的 pointerdown：
+    // 如果点击目标不在任何可见的弹出层内，则视为“点击外部”，关闭顶层弹窗。
+    const onContainerPointer = (event: Event) => {
+      const target = event.target as Node
+      const overlay = this.overlay
+      if (!overlay || !overlay.contains(target)) {
+        closeTopPopup('outside')
+      }
     }
     const onKeyDown = (event: Event) => {
       const keyboard = event as KeyboardEvent
@@ -193,10 +303,10 @@ export class QmlDomSceneGraph {
       focusable[next].focus()
       keyboard.preventDefault()
     }
-    this.overlay.addEventListener('pointerdown', onOverlayPointer)
+    this.container.addEventListener('pointerdown', onContainerPointer)
     this.domDocument.addEventListener('keydown', onKeyDown)
     this.overlayRemoveEvents = [
-      () => this.overlay?.removeEventListener('pointerdown', onOverlayPointer),
+      () => this.container?.removeEventListener('pointerdown', onContainerPointer),
       () => this.domDocument.removeEventListener('keydown', onKeyDown),
     ]
 
@@ -211,6 +321,7 @@ export class QmlDomSceneGraph {
     for (const node of this.mounted.values()) {
       node.unsubscribe.forEach(unsubscribe => unsubscribe())
       node.removeEvents.forEach(removeEvent => removeEvent())
+      node.anchorUnsubscribe.forEach(unsubscribe => unsubscribe())
     }
     this.mounted.clear()
     this.overlayRemoveEvents.forEach(removeEvent => removeEvent())
@@ -218,6 +329,7 @@ export class QmlDomSceneGraph {
     this.overlay = null
     this.container?.replaceChildren()
     this.container = null
+    this.ids = null
   }
 
   private mountObject(object: QmlObject, parentElement: HTMLElement, renderParent: QmlObject | null = object.parent): void {
@@ -241,8 +353,11 @@ export class QmlDomSceneGraph {
     if (object.hasSignal('childrenChanged')) {
       unsubscribe.push(object.connectSignal('childrenChanged', () => this.syncChildren(object, element)))
     }
+    // 差异3修复：订阅兄弟锚定目标（anchors.left/centerIn 等指向的兄弟对象）的
+    // 几何变化，兄弟尺寸/位置变了 → 重算本对象的位置尺寸。
+    const anchorUnsubscribe = this.subscribeAnchorTargets(object, element)
     const removeEvents = this.installEvents(object, element)
-    this.mounted.set(object, { element, parent: renderParent, unsubscribe, removeEvents })
+    this.mounted.set(object, { element, parent: renderParent, unsubscribe, removeEvents, anchorUnsubscribe })
     this.initializeCanvas(object, element)
     this.updateElement(object, element)
     orderedVisualChildren(object).forEach(child => this.mountObject(child, element, object))
@@ -261,6 +376,12 @@ export class QmlDomSceneGraph {
       object.setInternalProperty('width', geometry.width)
     }
     if (object.getProperty('anchors.fill') && Number(object.getProperty('height')) <= 0 && geometry.height > 0) {
+      object.setInternalProperty('height', geometry.height)
+    }
+    // StackLayout 子项由布局填满：把视觉尺寸写回属性，
+    // 使子项内部的 anchors.centerIn/anchors.fill 引用到正确的布局尺寸。
+    if (object.parent?.typeName === 'StackLayout' && geometry.width > 0 && geometry.height > 0) {
+      object.setInternalProperty('width', geometry.width)
       object.setInternalProperty('height', geometry.height)
     }
     if (object.hasProperty('background') && object.hasProperty('contentItem')) {
@@ -350,6 +471,20 @@ export class QmlDomSceneGraph {
         style.minHeight = 'max-content'
       }
     }
+    // Fix A：布局容器（flex）子项防收缩。
+    // CSS flex 默认 flex-shrink:1 会把声明尺寸的子项压扁，导致视觉尺寸与
+    // 锚点几何模型（基于声明尺寸）不一致——锚定 bottom/baseline 的子项会
+    // 渲染到容器视觉边界之外。非 fill 子项保持声明尺寸；fill 子项
+    // （anchors.fill / Layout.fillWidth / Layout.fillHeight）仍参与 flex 伸缩。
+    if (positionedByParent && ['Row', 'Column', 'RowLayout', 'ColumnLayout', 'Flow'].includes(object.parent?.typeName ?? '')) {
+      const fill = Boolean(object.getProperty('anchors.fill')) ||
+        Boolean(object.hasProperty('Layout.fillWidth') && object.getProperty('Layout.fillWidth')) ||
+        Boolean(object.hasProperty('Layout.fillHeight') && object.getProperty('Layout.fillHeight'))
+      if (!fill) {
+        style.flexShrink = '0'
+        style.flexGrow = '0'
+      }
+    }
     if (contentContainerTypes.has(object.typeName) && Number(object.getProperty('height')) <= 0) {
       style.height = 'auto'
       style.minHeight = 'max-content'
@@ -396,7 +531,8 @@ export class QmlDomSceneGraph {
 
     if (object.typeName === 'ApplicationWindow') {
       style.display = object.getProperty('visible') ? 'grid' : 'none'
-      style.gridTemplateRows = 'auto minmax(0, 1fr) auto'
+      const hasMenuBar = object.getProperty('menuBar') instanceof QmlObject
+      style.gridTemplateRows = hasMenuBar ? 'auto auto minmax(0, 1fr) auto' : 'auto minmax(0, 1fr) auto'
       style.maxWidth = '100%'
       style.boxSizing = 'border-box'
       style.overflow = 'hidden'
@@ -416,21 +552,26 @@ export class QmlDomSceneGraph {
     }
 
     if (object.parent?.typeName === 'ApplicationWindow') {
+      const menuBar = object.parent.getProperty('menuBar')
       const header = object.parent.getProperty('header')
       const footer = object.parent.getProperty('footer')
+      const hasMenuBar = menuBar instanceof QmlObject
       style.position = 'relative'
       style.inset = 'auto'
       style.width = '100%'
       style.minWidth = '0'
       style.boxSizing = 'border-box'
-      if (object === header) {
+      if (object === menuBar) {
         style.gridRow = '1'
         style.height = 'auto'
+      } else if (object === header) {
+        style.gridRow = hasMenuBar ? '2' : '1'
+        style.height = 'auto'
       } else if (object === footer) {
-        style.gridRow = '3'
+        style.gridRow = hasMenuBar ? '4' : '3'
         style.height = 'auto'
       } else {
-        style.gridRow = '2'
+        style.gridRow = hasMenuBar ? '3' : '2'
         style.height = '100%'
         style.minHeight = '0'
       }
@@ -461,10 +602,14 @@ export class QmlDomSceneGraph {
       style.color = isDefaultBlack && !hasCustomRectangleBackground
         ? 'var(--qml-control-text)'
         : textColor ? toCssColor(textColor) : ''
-      style.fontSize = cssLength(Number(object.getProperty('font.pixelSize')) || 16)
-      style.fontFamily = cssValue(object.getProperty('font.family'))
-      style.fontWeight = object.getProperty('font.bold') ? 'bold' : 'normal'
-      style.fontStyle = object.getProperty('font.italic') ? 'italic' : 'normal'
+      style.fontSize = (() => {
+        const pixelSize = Number(resolveInheritedFontProperty(object, 'font.pixelSize')) || 0
+        const pointSize = Number(resolveInheritedFontProperty(object, 'font.pointSize')) || 0
+        return cssLength(pixelSize > 0 ? pixelSize : pointSize > 0 ? pointSize * 4 / 3 : 16)
+      })()
+      style.fontFamily = cssValue(resolveInheritedFontProperty(object, 'font.family'))
+      style.fontWeight = resolveInheritedFontProperty(object, 'font.bold') ? 'bold' : 'normal'
+      style.fontStyle = resolveInheritedFontProperty(object, 'font.italic') ? 'italic' : 'normal'
       style.whiteSpace = object.getProperty('wrapMode') === 'Text.NoWrap' ? 'nowrap' : 'pre-wrap'
       if (object.hasProperty('padding')) style.padding = cssLength(object.getProperty('padding'))
     }
@@ -560,7 +705,9 @@ export class QmlDomSceneGraph {
       style.gap = '2px'
       style.padding = '0 8px'
       style.backgroundColor = 'var(--qml-panel-muted-bg)'
-      style.borderBottom = object.parent?.getProperty('header') === object ? '1px solid var(--qml-control-border)' : ''
+      style.borderBottom = object.parent?.getProperty('menuBar') === object || object.parent?.getProperty('header') === object
+        ? '1px solid var(--qml-control-border)'
+        : ''
       style.borderTop = object.parent?.getProperty('footer') === object ? '1px solid var(--qml-control-border)' : ''
       const menus = object.children.filter(child => child.typeName === 'Menu')
       const existing = [...element.querySelectorAll<HTMLButtonElement>(':scope > .qml-menu-command')]
@@ -571,10 +718,58 @@ export class QmlDomSceneGraph {
           button.className = 'qml-menu-command'
           button.type = 'button'
           button.textContent = cssValue(menu.getProperty('title'))
-          button.addEventListener('click', () => menu.callMethod('open'))
+          // container 的 pointerdown（点击外部关闭）会在 click 之前触发并关闭菜单，
+          // 这里用 pointerdown 记录“点击前是否已打开”，供 click 做 toggle 判断。
+          let wasOpenBeforeClick = false
+          button.addEventListener('pointerdown', () => {
+            wasOpenBeforeClick = Boolean(menu.getProperty('visible'))
+          })
+          button.addEventListener('click', () => {
+            if (wasOpenBeforeClick) {
+              // 点击已打开的菜单按钮 → 关闭（toggle）
+              menu.callMethod('close')
+              return
+            }
+            // 同一 MenuBar 下同时只显示一个菜单：先关闭其他已打开的兄弟菜单
+            menus.forEach(sibling => {
+              if (sibling !== menu && sibling.getProperty('visible')) sibling.callMethod('close')
+            })
+            const buttonRect = button.getBoundingClientRect()
+            const containerRect = this.container?.getBoundingClientRect()
+            if (containerRect) {
+              menu.setInternalProperty('x', buttonRect.left - containerRect.left)
+              menu.setInternalProperty('y', buttonRect.bottom - containerRect.top)
+            }
+            menu.callMethod('open')
+          })
           element.append(button)
         })
       }
+    }
+
+    if (object.typeName === 'Menu') {
+      style.display = object.getProperty('visible') ? 'flex' : 'none'
+      style.flexDirection = 'column'
+      style.alignItems = 'stretch'
+      style.gap = '2px'
+      style.padding = '4px'
+      style.width = 'max-content'
+      style.height = 'max-content'
+      style.minWidth = '0'
+      style.minHeight = '0'
+      style.boxSizing = 'border-box'
+    }
+
+    if (object.typeName === 'MenuSeparator' && object.parent?.typeName === 'Menu') {
+      // 分隔线：占满菜单宽度（几何计算出的 width 为 0，必须覆盖），
+      // 内联只设尺寸，颜色/边距交给 CSS。
+      style.position = 'relative'
+      style.left = ''
+      style.top = ''
+      style.width = '100%'
+      style.height = '1px'
+      style.minWidth = '0'
+      style.flexShrink = '0'
     }
 
     if (object.typeName === 'RowLayout' || object.typeName === 'ColumnLayout') {
@@ -619,8 +814,16 @@ export class QmlDomSceneGraph {
       const buttonTextColor = cssValue(object.getProperty('palette.buttonText'))
       style.backgroundColor = buttonColor === '#f3f3f3' ? '' : buttonColor
       style.color = buttonTextColor === '#202020' ? '' : buttonTextColor
-      style.fontFamily = cssValue(object.getProperty('font.family'))
-      style.fontSize = cssLength(object.getProperty('font.pixelSize'))
+      style.fontFamily = cssValue(resolveInheritedFontProperty(object, 'font.family'))
+      const pixelSize = Number(resolveInheritedFontProperty(object, 'font.pixelSize')) || 0
+      const pointSize = Number(resolveInheritedFontProperty(object, 'font.pointSize')) || 0
+      style.fontSize = pixelSize > 0
+        ? cssLength(pixelSize)
+        : pointSize > 0
+          ? cssLength(pointSize * 4 / 3)
+          : cssLength(14)
+      style.fontWeight = resolveInheritedFontProperty(object, 'font.bold') ? 'bold' : 'normal'
+      style.fontStyle = resolveInheritedFontProperty(object, 'font.italic') ? 'italic' : 'normal'
     }
 
     if (buttonTypes.has(object.typeName)) {
@@ -647,6 +850,30 @@ export class QmlDomSceneGraph {
       element.classList.toggle('qml-tool-button', object.typeName === 'ToolButton')
       element.classList.toggle('qml-button-flat', Boolean(object.getProperty('flat')))
       element.classList.toggle('qml-button-highlighted', Boolean(object.getProperty('highlighted')))
+      if (object.parent?.typeName === 'Menu') {
+        // 菜单项：在 Menu flex column 中垂直排列，撑满宽度、文字左对齐。
+        // 文本 span 必须参与流内布局（position: relative），否则 Menu 的
+        // max-content 宽度无法基于文本计算，菜单会塌缩成 0 宽。
+        // 注意：background/border/box-shadow/color 全部交给 CSS 控制
+        //（hover 高亮依赖选择器，不能被内联样式覆盖）。
+        style.position = 'relative'
+        style.left = ''
+        style.top = ''
+        style.width = '100%'
+        style.minWidth = '0'
+        style.justifyContent = 'flex-start'
+        style.textAlign = 'left'
+        style.padding = '4px 8px'
+        style.minHeight = '26px'
+        element.classList.add('qml-menu-item')
+        const content = element.querySelector<HTMLElement>('.qml-button-content')
+        if (content) {
+          content.style.position = 'relative'
+          content.style.inset = 'auto'
+          content.style.justifyContent = 'flex-start'
+          content.style.width = '100%'
+        }
+      }
     }
 
     if (element instanceof this.domDocument.defaultView!.HTMLInputElement) {
@@ -841,6 +1068,9 @@ export class QmlDomSceneGraph {
       style.display = object.getProperty('visible') ? 'flex' : 'none'
       style.alignItems = 'stretch'
       style.gap = '2px'
+      style.backgroundColor = 'var(--qml-panel-muted-bg)'
+      style.borderTop = object.parent?.getProperty('footer') === object ? '1px solid var(--qml-control-border)' : ''
+      style.borderBottom = object.parent?.getProperty('header') === object ? '1px solid var(--qml-control-border)' : ''
       orderedVisualChildren(object).forEach((child, index) => {
         const childElement = this.mounted.get(child)?.element
         if (childElement) childElement.setAttribute('aria-selected', String(index === Number(object.getProperty('currentIndex'))))
@@ -1076,8 +1306,38 @@ export class QmlDomSceneGraph {
     if (!node) return
     node.unsubscribe.forEach(unsubscribe => unsubscribe())
     node.removeEvents.forEach(removeEvent => removeEvent())
+    node.anchorUnsubscribe.forEach(unsubscribe => unsubscribe())
     node.element.remove()
     this.mounted.delete(object)
+  }
+
+  /**
+   * 订阅本对象 anchors 锚定目标（兄弟或父）的几何变化。
+   * QML 中 anchors 目标是声明式的：目标尺寸/位置变化时锚定项自动跟随。
+   * 父项变化已由 updateBranch 递归覆盖，这里只需补兄弟目标。
+   */
+  private subscribeAnchorTargets(object: QmlObject, element: HTMLElement): Array<() => void> {
+    const unsubscribers: Array<() => void> = []
+    const seen = new Set<QmlObject>()
+    const subscribe = (value: unknown) => {
+      const target = resolveAnchorTarget(value, object.parent, this.ids)
+      if (!target || target === object || seen.has(target)) return
+      seen.add(target)
+      const refresh = () => {
+        const node = this.mounted.get(object)
+        if (node) this.updateElement(object, node.element)
+      }
+      for (const prop of ['width', 'height', 'x', 'y'] as const) {
+        if (target.hasProperty(prop)) unsubscribers.push(target.onPropertyChanged(prop, refresh))
+      }
+      // 目标显式设置了尺寸但当前未挂载（例如 anchor 目标晚于本对象挂载）时，
+      // 目标挂载完成后的 updateElement 会重算本对象，无需额外处理。
+      void element
+    }
+    for (const prop of anchorTargetProperties) {
+      if (object.hasProperty(prop)) subscribe(object.getProperty(prop))
+    }
+    return unsubscribers
   }
 
   private resolveGeometry(object: QmlObject): {
@@ -1096,27 +1356,116 @@ export class QmlDomSceneGraph {
       x -= Number(parent.getProperty('contentX')) || 0
       y -= Number(parent.getProperty('contentY')) || 0
     }
-
-    const targetFor = (value: unknown): QmlObject | null => {
-      if (value instanceof QmlObject) return value
-      if (typeof value === 'string' && value.startsWith('parent')) return parent
-      return null
+    // QML 标准：StackLayout 会把每个子项 resize 填满整个布局区域。
+    // （QtQuick.Layouts 的 QQuickStackLayout::updateLayout() 对每个子项设置
+    //   layoutGeom = (0, 0, width, height)，覆盖子项自身的 width/height/anchors。）
+    if (parent.typeName === 'StackLayout') {
+      let layoutWidth = Number(parent.getProperty('width')) || 0
+      let layoutHeight = Number(parent.getProperty('height')) || 0
+      // StackLayout 常嵌在 ColumnLayout 等布局容器里，不一定是 ApplicationWindow
+      // 的直接子项，因此沿容器链向上查找 ApplicationWindow。
+      let window: QmlObject | null = null
+      for (let p = parent.parent; p; p = p.parent) {
+        if (p.typeName === 'ApplicationWindow') {
+          window = p
+          break
+        }
+      }
+      if (window) {
+        // ApplicationWindow 内容区是 CSS Grid 的 1fr 行：
+        // 内容区宽 = 窗口宽，内容区高 = 窗口高 - menuBar - header - footer（显式高或隐式高）
+        layoutWidth = Number(window.getProperty('width')) || layoutWidth
+        const strip = (key: string) => {
+          const item = window.getProperty(key)
+          if (!(item instanceof QmlObject)) return 0
+          return Number(item.getProperty('height')) || Number(item.getProperty('implicitHeight')) || 0
+        }
+        layoutHeight = Math.max(0, (Number(window.getProperty('height')) || layoutHeight)
+          - strip('menuBar') - strip('header') - strip('footer'))
+        // StackLayout 是布局容器的子项时，与兄弟项共享容器空间（QML 布局行为）：
+        // 沿主轴扣减兄弟尺寸——Column/ColumnLayout 扣高度，Row/RowLayout 扣宽度，
+        // 使模型尺寸与 CSS flex 分配结果一致（用声明尺寸避免递归）。
+        const layoutParent = parent.parent
+        if (layoutParent && ['ColumnLayout', 'Column'].includes(layoutParent.typeName)) {
+          const siblingHeight = orderedVisualChildren(layoutParent)
+            .filter(child => child !== parent)
+            .reduce((sum, sibling) => sum + (Number(sibling.getProperty('height')) || Number(sibling.getProperty('implicitHeight')) || 0), 0)
+          layoutHeight = Math.max(0, layoutHeight - siblingHeight)
+        } else if (layoutParent && ['RowLayout', 'Row'].includes(layoutParent.typeName)) {
+          const siblingWidth = orderedVisualChildren(layoutParent)
+            .filter(child => child !== parent)
+            .reduce((sum, sibling) => sum + (Number(sibling.getProperty('width')) || Number(sibling.getProperty('implicitWidth')) || 0), 0)
+          layoutWidth = Math.max(0, layoutWidth - siblingWidth)
+        }
+      }
+      // QML 方式（QQuickStackLayout::implicitSize）：无显式尺寸时用隐式尺寸，
+      // 即所有子项隐式尺寸的最大值（与 Qt 源码逐行一致）。
+      if (layoutWidth <= 0 || layoutHeight <= 0) {
+        let implicitWidth = 0
+        let implicitHeight = 0
+        for (const child of orderedVisualChildren(parent)) {
+          const declaredWidth = Number(child.getProperty('implicitWidth')) || 0
+          const declaredHeight = Number(child.getProperty('implicitHeight')) || 0
+          const content = contentImplicitSize(child)
+          implicitWidth = Math.max(implicitWidth, declaredWidth > 0 ? declaredWidth : content?.width ?? 0)
+          implicitHeight = Math.max(implicitHeight, declaredHeight > 0 ? declaredHeight : content?.height ?? 0)
+        }
+        if (layoutWidth <= 0) layoutWidth = Number(parent.getProperty('implicitWidth')) || implicitWidth
+        if (layoutHeight <= 0) layoutHeight = Number(parent.getProperty('implicitHeight')) || implicitHeight
+      }
+      if (layoutWidth > 0 && layoutHeight > 0) {
+        return { x: 0, y: 0, width: layoutWidth, height: layoutHeight }
+      }
     }
-    const targetSize = (target: QmlObject) => ({
-      width: Number(target.getProperty('width')) || 0,
-      height: Number(target.getProperty('height')) || 0,
-    })
+
+    const targetFor = (value: unknown): QmlObject | null => resolveAnchorTarget(value, parent, this.ids)
+    // 锚定线的坐标在父坐标系中：锚定父项时其坐标为 (0,0)，
+    // 锚定兄弟时用兄弟相对父坐标系的实际 x/y。
+    const targetOrigin = (target: QmlObject): { x: number; y: number } => (
+      target === parent
+        ? { x: 0, y: 0 }
+        : { x: Number(target.getProperty('x')) || 0, y: Number(target.getProperty('y')) || 0 }
+    )
+    const targetSize = (target: QmlObject) => {
+      if (target === parent && parent.typeName === 'ApplicationWindow') {
+        // Qt 中 ApplicationWindow 的子项挂在 contentItem 上，
+        // contentItem 的几何 = 窗口 − menuBar − header − footer。
+        // 因此锚定 parent（ApplicationWindow）时，parent 的有效尺寸是内容区。
+        const winWidth = Number(parent.getProperty('width')) || 0
+        const winHeight = Number(parent.getProperty('height')) || 0
+        const strip = (key: string) => {
+          const item = parent.getProperty(key)
+          if (!(item instanceof QmlObject)) return 0
+          return Number(item.getProperty('height')) || Number(item.getProperty('implicitHeight')) || 0
+        }
+        return {
+          width: winWidth,
+          height: Math.max(0, winHeight - strip('menuBar') - strip('header') - strip('footer')),
+        }
+      }
+      return {
+        width: Number(target.getProperty('width')) || 0,
+        height: Number(target.getProperty('height')) || 0,
+      }
+    }
     const margin = Number(object.getProperty('anchors.margins')) || 0
     const leftMargin = Number(object.getProperty('anchors.leftMargin')) || margin
     const rightMargin = Number(object.getProperty('anchors.rightMargin')) || margin
     const topMargin = Number(object.getProperty('anchors.topMargin')) || margin
     const bottomMargin = Number(object.getProperty('anchors.bottomMargin')) || margin
+    const horizontalCenterOffset = Number(object.getProperty('anchors.horizontalCenterOffset')) || 0
+    const verticalCenterOffset = Number(object.getProperty('anchors.verticalCenterOffset')) || 0
+    const baselineOffset = Number(object.getProperty('anchors.baselineOffset')) || 0
+    // Qt: alignWhenCentered=true（默认）时，item 超出锚定目标边界时贴边不溢出；
+    // false 时即使更大也严格居中。
+    const alignWhenCentered = object.getProperty('anchors.alignWhenCentered') !== false
     const fillTarget = targetFor(object.getProperty('anchors.fill'))
     if (fillTarget) {
       const target = targetSize(fillTarget)
+      const origin = targetOrigin(fillTarget)
       return {
-        x: leftMargin,
-        y: topMargin,
+        x: origin.x + leftMargin,
+        y: origin.y + topMargin,
         width: Math.max(0, target.width - leftMargin - rightMargin),
         height: Math.max(0, target.height - topMargin - bottomMargin),
       }
@@ -1125,29 +1474,65 @@ export class QmlDomSceneGraph {
     const centerTarget = targetFor(object.getProperty('anchors.centerIn'))
     if (centerTarget) {
       const target = targetSize(centerTarget)
-      x = (target.width - width) / 2
-      y = (target.height - height) / 2
+      const origin = targetOrigin(centerTarget)
+      const cx = origin.x + (target.width - width) / 2 + horizontalCenterOffset
+      const cy = origin.y + (target.height - height) / 2 + verticalCenterOffset
+      x = alignWhenCentered ? Math.max(0, cx) : cx
+      y = alignWhenCentered ? Math.max(0, cy) : cy
     }
     const horizontalTarget = targetFor(object.getProperty('anchors.horizontalCenter'))
-    if (horizontalTarget) x = (targetSize(horizontalTarget).width - width) / 2
+    if (horizontalTarget) {
+      const hx = targetOrigin(horizontalTarget).x + (targetSize(horizontalTarget).width - width) / 2 + horizontalCenterOffset
+      x = alignWhenCentered ? Math.max(0, hx) : hx
+    }
     const verticalTarget = targetFor(object.getProperty('anchors.verticalCenter'))
-    if (verticalTarget) y = (targetSize(verticalTarget).height - height) / 2
+    if (verticalTarget) {
+      const vy = targetOrigin(verticalTarget).y + (targetSize(verticalTarget).height - height) / 2 + verticalCenterOffset
+      y = alignWhenCentered ? Math.max(0, vy) : vy
+    }
 
     const leftTarget = targetFor(object.getProperty('anchors.left'))
     const rightTarget = targetFor(object.getProperty('anchors.right'))
-    if (leftTarget) x = leftMargin
+    if (leftTarget) x = targetOrigin(leftTarget).x + leftMargin
     if (rightTarget) {
-      const targetWidth = targetSize(rightTarget).width
-      if (leftTarget) width = Math.max(0, targetWidth - leftMargin - rightMargin)
-      else x = targetWidth - width - rightMargin
+      const target = targetSize(rightTarget)
+      const rightOrigin = targetOrigin(rightTarget).x
+      if (leftTarget) {
+        // 差异2：显式设置了 width → width 优先，right 忽略（QML 定义）
+        const explicitWidth = object.isExplicitlySet('width') && Number(object.getProperty('width')) > 0
+        if (explicitWidth) {
+          // 显式 width 时，left 生效，right 忽略
+        } else {
+          width = Math.max(0, rightOrigin + target.width - targetOrigin(leftTarget).x - leftMargin - rightMargin)
+        }
+      } else {
+        x = rightOrigin + target.width - width - rightMargin
+      }
     }
     const topTarget = targetFor(object.getProperty('anchors.top'))
     const bottomTarget = targetFor(object.getProperty('anchors.bottom'))
-    if (topTarget) y = topMargin
+    if (topTarget) y = targetOrigin(topTarget).y + topMargin
     if (bottomTarget) {
-      const targetHeight = targetSize(bottomTarget).height
-      if (topTarget) height = Math.max(0, targetHeight - topMargin - bottomMargin)
-      else y = targetHeight - height - bottomMargin
+      const target = targetSize(bottomTarget)
+      const bottomOrigin = targetOrigin(bottomTarget).y
+      if (topTarget) {
+        const explicitHeight = object.isExplicitlySet('height') && Number(object.getProperty('height')) > 0
+        if (explicitHeight) {
+          // 显式 height 时，top 生效，bottom 忽略
+        } else {
+          height = Math.max(0, bottomOrigin + target.height - targetOrigin(topTarget).y - topMargin - bottomMargin)
+        }
+      } else {
+        y = bottomOrigin + target.height - height - bottomMargin
+      }
+    }
+    // baseline 对齐（Qt 标准）：self.baseline 对齐 target.baseline。
+    // baseline 位置 = y + baselineOffset；文本控件 baselineOffset ≈ ascent，
+    // 普通 Item 默认 0（基线在顶部）。anchors.baselineOffset 为额外偏移（正值向下）。
+    const baselineTarget = targetFor(object.getProperty('anchors.baseline'))
+    if (baselineTarget) {
+      const targetBaseline = targetOrigin(baselineTarget).y + baselineOffsetFor(baselineTarget)
+      y = targetBaseline - baselineOffsetFor(object) + baselineOffset
     }
     return { x, y, width, height }
   }

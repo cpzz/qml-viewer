@@ -100,6 +100,28 @@ export function collectQmlPropertyReads<T>(evaluate: () => T): {
   }
 }
 
+// QML 对象桥接 id 注册表：绑定表达式求值时 QML 对象经
+// `{ __qmlObjectId: id }` 标记序列化穿过 QuickJS 边界。
+// id 必须全局稳定（同一对象永远同一 id），绑定求值后 SceneGraph
+// 才能把属性里存的标记反查回 QmlObject（如 `anchors.centerIn: parent`）。
+const bridgeObjectIds = new WeakMap<QmlObject, string>()
+const bridgeObjectsById = new Map<string, QmlObject>()
+let nextBridgeObjectId = 1
+
+export function bridgeObjectId(object: QmlObject): string {
+  let id = bridgeObjectIds.get(object)
+  if (!id) {
+    id = `__object${nextBridgeObjectId++}`
+    bridgeObjectIds.set(object, id)
+    bridgeObjectsById.set(id, object)
+  }
+  return id
+}
+
+export function bridgeObjectById(id: string): QmlObject | undefined {
+  return bridgeObjectsById.get(id)
+}
+
 function defaultValueForType(type: string): unknown {
   switch (type) {
     case 'bool': return false
@@ -123,6 +145,8 @@ export class QmlObject {
   private readonly aliases = new Map<string, QmlAliasTarget>()
   private readonly values = new Map<string, unknown>()
   private readonly initializedProperties = new Set<string>()
+  /** QML 声明中显式赋值过的属性（区别于默认值），用于 font 等继承属性 */
+  private readonly explicitlySet = new Set<string>()
   private readonly listeners = new Map<string, Set<QmlPropertyListener>>()
   private readonly signals = new Map<string, Set<QmlSignalListener>>()
   private readonly methods = new Map<string, QmlMethod>()
@@ -237,6 +261,11 @@ export class QmlObject {
 
   getPropertyNames(): string[] {
     return [...new Set([...this.definitions.keys(), ...this.aliases.keys()])]
+  }
+
+  /** 该属性是否在 QML 声明中显式赋值过（非默认值、非内部设置） */
+  isExplicitlySet(name: string): boolean {
+    return this.explicitlySet.has(name)
   }
 
   getProperty(name: string): unknown {
@@ -358,6 +387,7 @@ export class QmlObject {
 
     this.values.set(name, value)
     this.initializedProperties.add(name)
+    if (initializing && !internal) this.explicitlySet.add(name)
     const change = { name, previousValue, value }
     const listeners = this.listeners.get(name)
     if (listeners) [...listeners].forEach(listener => listener(change))

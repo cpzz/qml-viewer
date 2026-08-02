@@ -41,7 +41,50 @@ describe('QmlDomSceneGraph', () => {
     return { qmlDocument, container, sceneGraph }
   }
 
-  it('projects ApplicationWindow as a header-content-footer shell', () => {
+  it('projects ApplicationWindow as a menuBar-header-content-footer shell', () => {
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      ApplicationWindow {
+        id: window
+        width: 640
+        height: 480
+        visible: true
+        menuBar: MenuBar { Menu { title: "File" }; Menu { title: "Help" } }
+        header: ToolBar { ToolButton { text: "Button1" } }
+        footer: TabBar { TabButton { text: "Tab1" }; TabButton { text: "Tab2" } }
+        ScrollView { id: content; anchors.fill: parent; ColumnLayout { id: column; width: parent.width; anchors.margins: 16; Label { text: "Body" }; ListView { id: list; width: parent.width; height: 100 }; RowLayout { Button { text: "One" }; Button { text: "Two" } }; GroupBox { id: group; title: "Options"; ColumnLayout { id: options; CheckBox { text: "Enabled" } } } } }
+      }
+    `))
+    const sceneGraph = new QmlDomSceneGraph(document)
+    const container = document.createElement('main')
+    document.body.append(container)
+    sceneGraph.mount(qmlDocument, container)
+    const windowObject = qmlDocument.ids.get('window')!
+    const content = qmlDocument.ids.get('content')!
+    const windowElement = sceneGraph.getElement(windowObject)!
+    const menuBar = sceneGraph.getElement(windowObject.getProperty('menuBar') as QmlObject)!
+    const header = sceneGraph.getElement(windowObject.getProperty('header') as QmlObject)!
+    const footer = sceneGraph.getElement(windowObject.getProperty('footer') as QmlObject)!
+
+    expect(windowElement.style.display).toBe('grid')
+    expect(windowElement.style.gridTemplateRows).toBe('auto auto minmax(0, 1fr) auto')
+    expect(menuBar.style.gridRow).toBe('1')
+    expect(menuBar.textContent).toContain('File')
+    expect(menuBar.textContent).toContain('Help')
+    expect(header.style.gridRow).toBe('2')
+    expect(sceneGraph.getElement(content)?.style.gridRow).toBe('3')
+    expect(content.getProperty('width')).toBe(640)
+    expect(sceneGraph.getElement(qmlDocument.ids.get('list')!)?.style.maxWidth).toBe('100%')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('list')!)?.style.width).toBe('auto')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('column')!)?.style.height).toBe('auto')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('column')!)?.style.width).toBe('auto')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('group')!)?.style.height).toBe('auto')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('options')!)?.style.position).toBe('relative')
+    expect(footer.style.gridRow).toBe('4')
+    expect(footer.textContent).toContain('Tab1')
+    sceneGraph.dispose()
+  })
+
+  it('projects ApplicationWindow as a 3-row shell without menuBar', () => {
     const qmlDocument = instantiateQmlDocument(parseQML(`
       ApplicationWindow {
         id: window
@@ -50,7 +93,7 @@ describe('QmlDomSceneGraph', () => {
         visible: true
         header: MenuBar { Menu { title: "File" }; Menu { title: "Help" } }
         footer: MenuBar { Menu { title: "Status" } }
-        ScrollView { id: content; anchors.fill: parent; ColumnLayout { id: column; width: parent.width; anchors.margins: 16; Label { text: "Body" }; ListView { id: list; width: parent.width; height: 100 }; RowLayout { Button { text: "One" }; Button { text: "Two" } }; GroupBox { id: group; title: "Options"; ColumnLayout { id: options; CheckBox { text: "Enabled" } } } } }
+        ScrollView { id: content; anchors.fill: parent; Label { text: "Body" } }
       }
     `))
     const sceneGraph = new QmlDomSceneGraph(document)
@@ -63,19 +106,10 @@ describe('QmlDomSceneGraph', () => {
     const header = sceneGraph.getElement(windowObject.getProperty('header') as QmlObject)!
     const footer = sceneGraph.getElement(windowObject.getProperty('footer') as QmlObject)!
 
-    expect(windowElement.style.display).toBe('grid')
-    expect(windowElement.style.gridTemplateRows).toBe('36px minmax(0, 1fr) 32px')
+    expect(windowElement.style.gridTemplateRows).toBe('auto minmax(0, 1fr) auto')
     expect(header.style.gridRow).toBe('1')
     expect(header.textContent).toContain('File')
-    expect(header.textContent).toContain('Help')
     expect(sceneGraph.getElement(content)?.style.gridRow).toBe('2')
-    expect(content.getProperty('width')).toBe(640)
-    expect(sceneGraph.getElement(qmlDocument.ids.get('list')!)?.style.maxWidth).toBe('100%')
-    expect(sceneGraph.getElement(qmlDocument.ids.get('list')!)?.style.width).toBe('auto')
-    expect(sceneGraph.getElement(qmlDocument.ids.get('column')!)?.style.height).toBe('auto')
-    expect(sceneGraph.getElement(qmlDocument.ids.get('column')!)?.style.width).toBe('auto')
-    expect(sceneGraph.getElement(qmlDocument.ids.get('group')!)?.style.height).toBe('auto')
-    expect(sceneGraph.getElement(qmlDocument.ids.get('options')!)?.style.position).toBe('relative')
     expect(footer.style.gridRow).toBe('3')
     expect(footer.textContent).toContain('Status')
     sceneGraph.dispose()
@@ -462,6 +496,55 @@ describe('QmlDomSceneGraph', () => {
 
     expect(fillElement.style.width).toBe('380px')
     expect(centeredElement.style.left).toBe('150px')
+  })
+
+  it('keeps anchor-line references (parent.left etc.) after binding activation', async () => {
+    // 回归：激活路径会把 `anchors.left: parent.left` 当绑定求值，QuickJS 对
+    // `parent.left` 静默返回 undefined → 锚点失效。修复后保留字符串由
+    // resolveAnchorTarget 解析，各锚线 label 应分布在正确位置。
+    const jsEngine = await QmlJsEngine.create()
+    const qmlDocument = activateQmlDocument(parseQML(`
+      Item {
+        id: root
+        width: 300
+        height: 240
+        Rectangle {
+          id: box
+          width: 200
+          height: 200
+          color: "green"
+          Label { id: leftTop; anchors.left: parent.left; anchors.top: parent.top; text: "LT" }
+          Label { id: rightTop; anchors.right: parent.right; anchors.top: parent.top; text: "RT" }
+          Label { id: hCenter; anchors.horizontalCenter: parent.horizontalCenter; text: "HC" }
+          Label { id: vCenter; anchors.verticalCenter: parent.verticalCenter; text: "VC" }
+          Label { id: centerIn; anchors.centerIn: parent; text: "CI" }
+          Rectangle { id: leftHalf; width: 80; height: 60; color: "red" }
+          Label { id: afterLeft; anchors.right: leftHalf.right; text: "X" }
+        }
+      }
+    `), jsEngine)
+    const container = document.createElement('main')
+    document.body.append(container)
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, container)
+    const el = (id: string) => sceneGraph.getElement(qmlDocument.ids.get(id)!)!
+
+    // 隐式尺寸：默认 16px 字号 → Label 20×20
+    expect(el('leftTop').style.left).toBe('0px')
+    expect(el('leftTop').style.top).toBe('0px')
+    // right: 右缘贴父右缘 → x = 200 - 20 = 180
+    expect(el('rightTop').style.left).toBe('180px')
+    expect(el('rightTop').style.top).toBe('0px')
+    // horizontalCenter: (200 - 20) / 2 = 90
+    expect(el('hCenter').style.left).toBe('90px')
+    // verticalCenter: (200 - 20) / 2 = 90
+    expect(el('vCenter').style.top).toBe('90px')
+    // centerIn: 两个方向都居中
+    expect(el('centerIn').style.left).toBe('90px')
+    expect(el('centerIn').style.top).toBe('90px')
+    // 兄弟锚线引用：右缘对齐 leftHalf 右缘 → x = 80 - 20 = 60
+    expect(el('afterLeft').style.left).toBe('60px')
+    jsEngine.dispose()
   })
 
   it('bridges DOM pointer events to MouseArea state and QML handlers', async () => {

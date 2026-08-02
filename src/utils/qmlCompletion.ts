@@ -393,14 +393,30 @@ function parentMemberItems(context: QmlDocumentContext, range: monaco.Range): mo
   const definition = qmlTypeMap.get(parent.type)
   if (definition) {
     const directProperties = definition.properties.filter(item => !item.name.includes('.'))
+    // 锚线属性：QML 中 Item 把锚线直接暴露为属性（parent.left / parent.right / …），
+    // 所以 parent. 之后应插入裸锚线名，而非 anchors.left（那是设置自身锚的分组写法）。
+    // 仅 7 条锚线是 Item 直接属性；centerIn/fill/margins 等只在 anchors 对象上，不提示。
+    const anchorLineNames = new Set(['left', 'right', 'top', 'bottom', 'horizontalCenter', 'verticalCenter', 'baseline'])
+    const anchorProperties = definition.properties
+      .filter(item => item.name.startsWith('anchors.'))
+      .map(item => item.name.slice('anchors.'.length))
+      .filter(name => anchorLineNames.has(name))
     const propertyGroups = [...new Set(
       definition.properties
-        .filter(item => item.name.includes('.'))
+        .filter(item => item.name.includes('.') && !item.name.startsWith('anchors.'))
         .map(item => item.name.split('.')[0]),
     )]
     items.push(...memberPropertyItems(directProperties, range).map(item => ({
       ...item,
       detail: `parent (${parent.type}) · ${item.detail}`,
+    })))
+    items.push(...anchorProperties.map(name => ({
+      label: name,
+      kind: monaco.languages.CompletionItemKind.Property,
+      insertText: name,
+      detail: `parent (${parent.type}) · 锚线 ${name}`,
+      range,
+      sortText: `0-anchor-${name}`,
     })))
     items.push(...propertyGroups.map(group => ({
       label: group,

@@ -408,6 +408,35 @@ body {
   background: var(--qml-control-bg-hover);
 }
 
+.qml-runtime-root [data-qml-type="Menu"] > [data-qml-type="MenuItem"],
+.qml-runtime-root .qml-menu-item {
+  border: 0;
+  border-radius: 4px;
+  color: var(--qml-control-text);
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.qml-runtime-root [data-qml-type="Menu"] > [data-qml-type="MenuItem"] > .qml-button-content,
+.qml-runtime-root .qml-menu-item > .qml-button-content {
+  justify-content: flex-start;
+}
+
+.qml-runtime-root [data-qml-type="Menu"] > [data-qml-type="MenuItem"]:hover,
+.qml-runtime-root .qml-menu-item:hover {
+  background: var(--qml-control-bg-hover);
+}
+
+.qml-runtime-root [data-qml-type="Menu"] > [data-qml-type="MenuSeparator"] {
+  height: 1px;
+  margin: 2px 4px;
+  border: 0;
+  background: var(--qml-control-border);
+}
+
 .qml-runtime-root :is(
   [data-qml-type="Button"],
   [data-qml-type="RoundButton"],
