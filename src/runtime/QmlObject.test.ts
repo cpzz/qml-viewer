@@ -31,6 +31,51 @@ describe('QmlObject', () => {
     expect(grandchild.parent).toBeNull()
   })
 
+  it('reparents objects with consistent parent, children, and default data notifications', () => {
+    const first = new QmlObject('Item')
+    const second = new QmlObject('Item')
+    for (const parent of [first, second]) {
+      parent.defineProperty({ name: 'data', type: 'list<QtObject>', initialValue: [], default: true })
+      parent.defineSignal('childrenChanged')
+    }
+    const child = new QmlObject('Rectangle', first)
+    child.defineSignal('parentChanged')
+    first.appendDefaultChild(child)
+    const firstChanged = vi.fn()
+    const secondChanged = vi.fn()
+    const parentChanged = vi.fn()
+    first.connectSignal('childrenChanged', firstChanged)
+    second.connectSignal('childrenChanged', secondChanged)
+    child.connectSignal('parentChanged', parentChanged)
+
+    child.reparentTo(second)
+    second.appendDefaultChild(child)
+
+    expect(first.children).toEqual([])
+    expect(first.getProperty('data')).toEqual([])
+    expect(second.children).toEqual([child])
+    expect(second.getProperty('data')).toEqual([child])
+    expect(child.parent).toBe(second)
+    expect(firstChanged).toHaveBeenCalledOnce()
+    expect(secondChanged).toHaveBeenCalledOnce()
+    expect(parentChanged).toHaveBeenCalledWith(second)
+  })
+
+  it('rejects indirect ownership cycles and emits destroyed once', () => {
+    const root = new QmlObject('Item')
+    root.defineSignal('destroyed')
+    const child = new QmlObject('Item', root)
+    const destroyed = vi.fn()
+    root.connectSignal('destroyed', destroyed)
+
+    expect(() => root.reparentTo(child)).toThrow('circular ownership')
+    root.destroy()
+    root.destroy()
+
+    expect(destroyed).toHaveBeenCalledOnce()
+    expect(child.parent).toBeNull()
+  })
+
   it('disconnects property and signal listeners when destroyed', () => {
     const object = new QmlObject('Item')
     object.defineProperty({ name: 'value', type: 'int', initialValue: 0 })
@@ -59,6 +104,22 @@ describe('QmlObject', () => {
 
     expect(listener).toHaveBeenCalledOnce()
     expect(listener).toHaveBeenCalledWith({ name: 'count', previousValue: 1, value: 2 })
+  })
+
+  it('tracks external assignments even when the assigned value equals the default', () => {
+    const object = new QmlObject('Item')
+    object.defineProperty({ name: 'color', type: 'color', initialValue: 'black' })
+    object.defineProperty({ name: 'inheritedColor', type: 'color', initialValue: 'black' })
+    object.defineProperty({ name: 'runtimeColor', type: 'color', initialValue: 'black' })
+
+    object.initializeProperty('color', 'black')
+    object.setInternalProperty('inheritedColor', 'red')
+    object.setProperty('runtimeColor', 'red')
+
+    expect(object.isExplicitlySet('color')).toBe(true)
+    expect(object.isPropertyAssigned('color')).toBe(true)
+    expect(object.isPropertyAssigned('inheritedColor')).toBe(false)
+    expect(object.isPropertyAssigned('runtimeColor')).toBe(true)
   })
 
   it('enforces readonly and required property semantics', () => {

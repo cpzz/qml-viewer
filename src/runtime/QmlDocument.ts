@@ -7,7 +7,9 @@ import { createBuiltinQmlTypeRegistry } from './BuiltinQmlTypes'
 import { QmlExecutionEnvironment } from './QmlExecutionEnvironment'
 import type { QmlJsEngine } from './QmlJsEngine'
 import { QmlItemViewController } from './QmlItemViewController'
+import { QmlItemController } from './QmlItemController'
 import { QmlLoaderController, type QmlLoaderSourceResolver } from './QmlLoaderController'
+import { QmlLayoutEngine } from './QmlLayoutEngine'
 import { QmlObject } from './QmlObject'
 import { QmlRepeaterController } from './QmlRepeaterController'
 import { QmlShortcutController } from './QmlShortcutController'
@@ -50,7 +52,27 @@ interface InlineDelegateFactory {
   activate?: (instance: QmlDocumentInstance) => void
 }
 
-function coerceLiteral(value: string): unknown {
+function decodeQmlEscapes(value: string): string {
+  return value.replace(/\\(u[\da-fA-F]{4}|x[\da-fA-F]{2}|[nrtbfv0\\'"])/g, (_, escape: string) => {
+    if (escape.startsWith('u')) return String.fromCharCode(Number.parseInt(escape.slice(1), 16))
+    if (escape.startsWith('x')) return String.fromCharCode(Number.parseInt(escape.slice(1), 16))
+    return ({ n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', 0: '\0' } as Record<string, string>)[escape] ?? escape
+  })
+}
+
+function decodeQmlString(value: string): string {
+  if (value.startsWith('"')) {
+    try {
+      return JSON.parse(value) as string
+    } catch {
+      return value.slice(1, -1)
+    }
+  }
+  return decodeQmlEscapes(value.slice(1, -1))
+}
+
+function coerceLiteral(value: string, stringLiteral = false): unknown {
+  if (stringLiteral) return decodeQmlEscapes(value)
   const trimmed = value.trim()
   if (trimmed === 'true') return true
   if (trimmed === 'false') return false
@@ -58,7 +80,7 @@ function coerceLiteral(value: string): unknown {
   if (/^[+-]?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) return Number(trimmed)
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
       (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-    return trimmed.slice(1, -1)
+    return decodeQmlString(trimmed)
   }
   if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
     try {
@@ -112,17 +134,17 @@ function instantiateNode(
       required: declaration.isRequired,
     }, declaration.isDefault)
     if (declaration.value !== undefined) {
-      object.initializeProperty(declaration.name, coerceLiteral(declaration.value))
+      object.initializeProperty(declaration.name, coerceLiteral(declaration.value, Boolean(node.literalProperties?.[declaration.name])))
     }
   }
 
   for (const [name, rawValue] of Object.entries(node.properties)) {
-    if (name === 'id' || declarations[name] || /^on[A-Z]/.test(name) || name === 'Component.onCompleted') continue
+    if (name === 'id' || declarations[name] || /^(?:.+\.)?on[A-Z]/.test(name) || name === 'Component.onCompleted') continue
     if (!object.hasProperty(name) && node.type === 'PropertyChanges') {
       object.defineProperty({ name, type: 'var' })
     }
     if (!object.hasProperty(name)) throw new Error(`Unknown property ${name} on ${node.type}`)
-    object.initializeProperty(name, coerceLiteral(rawValue))
+    object.initializeProperty(name, coerceLiteral(rawValue, Boolean(node.literalProperties?.[name])))
   }
 
   for (const signal of Object.values(node.signals ?? {})) {
@@ -246,8 +268,10 @@ export function instantiateQmlDocument(
 }
 
 function handlerSignalName(name: string): string | null {
-  if (!/^on[A-Z]/.test(name)) return null
-  return name[2].toLowerCase() + name.slice(3)
+  const match = name.match(/^(?:(.+)\.)?on([A-Z].*)$/)
+  if (!match) return null
+  const signal = match[2][0].toLowerCase() + match[2].slice(1)
+  return match[1] ? `${match[1]}.${signal}` : signal
 }
 
 function handlerBody(source: string): string {
@@ -314,12 +338,14 @@ export function activateQmlDocument(
   const stateMachines: QmlStateMachine[] = []
   const loaderControllers: QmlLoaderController[] = []
   const itemViewControllers: QmlItemViewController[] = []
+  const itemControllers: QmlItemController[] = []
   const repeaterControllers: QmlRepeaterController[] = []
   const timerControllers: QmlTimerController[] = []
   const shortcutControllers: QmlShortcutController[] = []
   const animationControllers: QmlAnimationController[] = []
   const behaviorControllers: QmlBehavior[] = []
   const stackViewControllers: QmlStackViewController[] = []
+  const layoutEngines: QmlLayoutEngine[] = []
 
   const activateInstance = (instance: QmlDocumentInstance, instanceExecution: QmlExecutionEnvironment) => {
     const flattenedNodes = instance.nodes.flatMap(function flatten(current): QMLNode[] {
@@ -374,6 +400,11 @@ export function activateQmlDocument(
       const execute = (body: string, locals: Record<string, unknown> = {}) => {
         instanceExecution.execute(`${visibleMethodDeclarations(object)}\n${body}`, object, locals)
       }
+      // QML 规范：父元素定义的函数对子元素属性绑定可见，用 IIFE 将方法声明包袹传入绑定求値
+      const _methodPrefix = visibleMethodDeclarations(object)
+      const evalBinding = _methodPrefix
+        ? (expr: string) => instanceExecution.evaluate(`(function(){${_methodPrefix}\nreturn (${expr})})()`, object)
+        : (expr: string) => instanceExecution.evaluate(expr, object)
 
       const expressions = new Map<string, string>()
       for (const declaration of Object.values(node.propertyDeclarations ?? {})) {
@@ -382,7 +413,7 @@ export function activateQmlDocument(
         }
       }
       for (const [name, source] of Object.entries(node.properties)) {
-        if (name !== 'id' && !/^on[A-Z]/.test(name) && name !== 'Component.onCompleted') {
+        if (name !== 'id' && !handlerSignalName(name) && name !== 'Component.onCompleted') {
           expressions.set(name, source)
         }
       }
@@ -413,8 +444,8 @@ export function activateQmlDocument(
           continue
         }
         try {
-          instanceExecution.evaluate(expression, object)
-          bindings.bind(object, name, () => instanceExecution.evaluate(expression, object))
+          evalBinding(expression)
+          bindings.bind(object, name, () => evalBinding(expression))
         } catch {
           bindings.unbind(object, name)
         }
@@ -482,6 +513,7 @@ export function activateQmlDocument(
 
   const installRuntimeControllers = (instance: QmlDocumentInstance) => {
     for (const object of instance.nodeObjects.values()) {
+      if (object.hasProperty('children')) itemControllers.push(new QmlItemController(object))
       if (['ListView', 'GridView', 'PathView'].includes(object.typeName)) {
         const controller = new QmlItemViewController(object)
         itemViewControllers.push(controller)
@@ -494,6 +526,8 @@ export function activateQmlDocument(
         const controller = new QmlRepeaterController(object)
         repeaterControllers.push(controller)
         object.defineMethod('itemAt', index => controller.itemAt(Number(index)))
+      } else if (['RowLayout', 'ColumnLayout', 'GridLayout'].includes(object.typeName)) {
+        layoutEngines.push(new QmlLayoutEngine(object))
       } else if (object.typeName === 'Timer') {
         timerControllers.push(new QmlTimerController(object))
       } else if (object.typeName === 'Shortcut' && options.shortcutEventTarget) {
@@ -598,12 +632,14 @@ export function activateQmlDocument(
       disconnectors.forEach(disconnect => disconnect())
       loaderControllers.forEach(controller => controller.dispose())
       itemViewControllers.forEach(controller => controller.dispose())
+      itemControllers.forEach(controller => controller.dispose())
       repeaterControllers.forEach(controller => controller.dispose())
       timerControllers.forEach(controller => controller.dispose())
       shortcutControllers.forEach(controller => controller.dispose())
       animationControllers.forEach(controller => controller.dispose())
       behaviorControllers.forEach(controller => controller.dispose())
       stackViewControllers.forEach(controller => controller.dispose())
+      layoutEngines.forEach(engine => engine.dispose())
       bindings.dispose()
       stateMachines.forEach(machine => machine.stop())
     },

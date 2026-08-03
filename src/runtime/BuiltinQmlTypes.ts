@@ -1,5 +1,8 @@
-import type { QmlRuntimePropertyDefinition } from './QmlObject'
+import { QmlObject, type QmlRuntimePropertyDefinition } from './QmlObject'
 import { QmlTypeRegistry, type QmlTypeDefinition } from './QmlTypeRegistry'
+import { forceActiveFocus, nextItemInFocusChain, stackItem } from './QmlItemController'
+import { childAt, contains, mapFromItem, mapToItem } from './QmlItemGeometry'
+import { grabToImage } from './QmlItemGrab'
 
 const property = (
   name: string,
@@ -15,20 +18,89 @@ const itemProperties: QmlRuntimePropertyDefinition[] = [
   property('z', 'real', 0),
   property('width', 'real', 0),
   property('height', 'real', 0),
-  property('implicitWidth', 'real', 0, { readonly: true }),
-  property('implicitHeight', 'real', 0, { readonly: true }),
+  property('implicitWidth', 'real', 0),
+  property('implicitHeight', 'real', 0),
+  property('parent', 'Item', null),
+  property('children', 'list<Item>', [], { readonly: true }),
+  property('visibleChildren', 'list<Item>', [], { readonly: true }),
+  property('resources', 'list<QtObject>', [], { readonly: true }),
+  property('childrenRect.x', 'real', 0, { readonly: true }),
+  property('childrenRect.y', 'real', 0, { readonly: true }),
+  property('childrenRect.width', 'real', 0, { readonly: true }),
+  property('childrenRect.height', 'real', 0, { readonly: true }),
   property('visible', 'bool', true),
   property('enabled', 'bool', true),
   property('opacity', 'real', 1),
   property('clip', 'bool', false),
   property('rotation', 'real', 0),
   property('scale', 'real', 1),
+  property('transformOrigin', 'var', 'Item.Center'),
+  property('transform', 'list<Transform>', [], { readonly: true }),
+  property('smooth', 'bool', true),
+  property('antialiasing', 'bool', false),
+  property('baselineOffset', 'real', 0),
+  property('containmentMask', 'var', null),
+  property('palette', 'var', null),
+  property('palette.accent', 'color', '#308cc6'),
+  property('palette.alternateBase', 'color', '#f7f7f7'),
+  property('palette.base', 'color', '#ffffff'),
+  property('palette.brightText', 'color', '#ffffff'),
+  property('palette.button', 'color', '#efefef'),
+  property('palette.buttonText', 'color', '#000000'),
+  property('palette.dark', 'color', '#9f9f9f'),
+  property('palette.highlight', 'color', '#308cc6'),
+  property('palette.highlightedText', 'color', '#ffffff'),
+  property('palette.light', 'color', '#ffffff'),
+  property('palette.link', 'color', '#0000ff'),
+  property('palette.linkVisited', 'color', '#ff00ff'),
+  property('palette.mid', 'color', '#b8b8b8'),
+  property('palette.midlight', 'color', '#cacaca'),
+  property('palette.placeholderText', 'color', '#80000000'),
+  property('palette.shadow', 'color', '#767676'),
+  property('palette.text', 'color', '#000000'),
+  property('palette.toolTipBase', 'color', '#ffffdc'),
+  property('palette.toolTipText', 'color', '#000000'),
+  property('palette.window', 'color', '#efefef'),
+  property('palette.windowText', 'color', '#000000'),
   property('focus', 'bool', false),
   property('activeFocus', 'bool', false, { readonly: true }),
+  property('activeFocusOnTab', 'bool', false),
+  property('focusPolicy', 'var', 'Qt.NoFocus'),
+  property('layer.effect', 'var', null),
+  property('layer.enabled', 'bool', false),
+  property('layer.format', 'var', 'ShaderEffectSource.RGBA8'),
+  property('layer.live', 'bool', true),
+  property('layer.mipmap', 'bool', false),
+  property('layer.samplerName', 'string', 'source'),
+  property('layer.samples', 'int', 0),
+  property('layer.smooth', 'bool', false),
+  property('layer.sourceRect', 'var', null),
+  property('layer.textureMirroring', 'var', 'ShaderEffectSource.MirrorVertically'),
+  property('layer.textureSize', 'var', null),
+  property('layer.wrapMode', 'var', 'ShaderEffectSource.ClampToEdge'),
   property('KeyNavigation.left', 'var', null),
   property('KeyNavigation.right', 'var', null),
   property('KeyNavigation.up', 'var', null),
   property('KeyNavigation.down', 'var', null),
+  property('KeyNavigation.tab', 'var', null),
+  property('KeyNavigation.backtab', 'var', null),
+  property('KeyNavigation.priority', 'var', 'KeyNavigation.AfterItem'),
+  property('Keys.enabled', 'bool', true),
+  property('Keys.forwardTo', 'list<Item>', []),
+  property('Keys.priority', 'var', 'Keys.BeforeItem'),
+  property('Drag.active', 'bool', false),
+  property('Drag.source', 'var', null),
+  property('Drag.target', 'Item', null, { readonly: true }),
+  property('Drag.hotSpot.x', 'real', 0),
+  property('Drag.hotSpot.y', 'real', 0),
+  property('Drag.imageSource', 'url', ''),
+  property('Drag.imageSourceSize.width', 'int', 0),
+  property('Drag.imageSourceSize.height', 'int', 0),
+  property('Drag.keys', 'list<string>', []),
+  property('Drag.mimeData', 'var', null),
+  property('Drag.proposedAction', 'var', 'Qt.IgnoreAction', { readonly: true }),
+  property('Drag.supportedActions', 'var', 'Qt.MoveAction'),
+  property('Drag.dragType', 'var', 'Drag.Internal'),
   property('state', 'string', ''),
   property('states', 'list<State>', []),
   property('transitions', 'list<Transition>', []),
@@ -52,12 +124,19 @@ const itemProperties: QmlRuntimePropertyDefinition[] = [
   property('anchors.alignWhenCentered', 'bool', true),
   property('Layout.fillWidth', 'bool', false),
   property('Layout.fillHeight', 'bool', false),
-  property('Layout.preferredWidth', 'real', 0),
-  property('Layout.preferredHeight', 'real', 0),
+  property('Layout.preferredWidth', 'real', -1),
+  property('Layout.preferredHeight', 'real', -1),
   property('Layout.minimumWidth', 'real', 0),
   property('Layout.minimumHeight', 'real', 0),
   property('Layout.maximumWidth', 'real', Number.MAX_SAFE_INTEGER),
   property('Layout.maximumHeight', 'real', Number.MAX_SAFE_INTEGER),
+  property('Layout.margins', 'real', 0),
+  property('Layout.leftMargin', 'real', -1),
+  property('Layout.rightMargin', 'real', -1),
+  property('Layout.topMargin', 'real', -1),
+  property('Layout.bottomMargin', 'real', -1),
+  property('Layout.horizontalStretchFactor', 'int', -1),
+  property('Layout.verticalStretchFactor', 'int', -1),
   property('Layout.row', 'int', -1),
   property('Layout.column', 'int', -1),
   property('Layout.rowSpan', 'int', 1),
@@ -74,6 +153,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   {
     name: 'QtObject',
     properties: [property('objectName', 'string', '')],
+    signals: ['destroyed'],
   },
   {
     name: 'Connections',
@@ -87,11 +167,58 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
     signals: ['childrenChanged'],
   },
   { name: 'ListElement', baseType: 'QtObject' },
+  { name: 'Transform', baseType: 'QtObject' },
+  {
+    name: 'Translate',
+    baseType: 'Transform',
+    properties: [property('x', 'real', 0), property('y', 'real', 0)],
+  },
+  {
+    name: 'Scale',
+    baseType: 'Transform',
+    properties: [
+      property('origin.x', 'real', 0), property('origin.y', 'real', 0),
+      property('xScale', 'real', 1), property('yScale', 'real', 1),
+    ],
+  },
+  {
+    name: 'Rotation',
+    baseType: 'Transform',
+    properties: [
+      property('angle', 'real', 0), property('origin.x', 'real', 0), property('origin.y', 'real', 0),
+      property('axis.x', 'real', 0), property('axis.y', 'real', 0), property('axis.z', 'real', 1),
+    ],
+  },
   {
     name: 'Item',
     baseType: 'QtObject',
     properties: itemProperties,
-    signals: ['childrenChanged', 'keyPressed', 'keyReleased'],
+    signals: ['keyPressed', 'keyReleased', 'Keys.pressed', 'Keys.released', 'Keys.shortcutOverride'],
+    methods: {
+      childAt(x, y) { return childAt(this, x, y) },
+      contains(point, y) { return contains(this, point, y) },
+      dumpItemTree() {
+        const lines: string[] = []
+        const visit = (item: QmlObject, depth: number) => {
+          const objectName = item.getProperty('objectName')
+          lines.push(`${'  '.repeat(depth)}${item.typeName}${objectName ? ` ${objectName}` : ''}`)
+          item.children.filter(child => child.hasProperty('visible')).forEach(child => visit(child, depth + 1))
+        }
+        visit(this, 0)
+        return lines.join('\n')
+      },
+      ensurePolished() {},
+      forceActiveFocus() { forceActiveFocus(this) },
+      grabToImage(callback, targetSize) { return grabToImage(this, callback, targetSize) },
+      mapFromGlobal(point, y, width, height) { return mapFromItem(this, null, point, y, width, height) },
+      mapFromItem(item, point, y, width, height) { return mapFromItem(this, item as QmlObject | null, point, y, width, height) },
+      mapToGlobal(point, y, width, height) { return mapToItem(this, null, point, y, width, height) },
+      mapToItem(item, point, y, width, height) { return mapToItem(this, item as QmlObject | null, point, y, width, height) },
+      nextItemInFocusChain(forward = true) { return nextItemInFocusChain(this, Boolean(forward)) },
+      polish() {},
+      stackAfter(sibling) { stackItem(this, sibling as QmlObject, true) },
+      stackBefore(sibling) { stackItem(this, sibling as QmlObject, false) },
+    },
   },
   { name: 'FocusScope', baseType: 'Item' },
   {
@@ -119,6 +246,12 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('verticalAlignment', 'var', 'Text.AlignTop'),
       property('wrapMode', 'var', 'Text.NoWrap'),
       property('elide', 'var', 'Text.ElideNone'),
+      property('maximumLineCount', 'int', 2147483647),
+      property('lineHeight', 'real', 1.0),
+      property('lineHeightMode', 'var', 'Text.ProportionalHeight'),
+      property('contentWidth', 'real', 0, { readonly: true }),
+      property('contentHeight', 'real', 0, { readonly: true }),
+      property('truncated', 'bool', false, { readonly: true }),
     ],
   },
   { name: 'Label', baseType: 'Text', properties: [property('padding', 'real', 0)] },
@@ -129,6 +262,16 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('source', 'url', ''),
       property('fillMode', 'var', 'Image.Stretch'),
       property('status', 'int', 0, { readonly: true }),
+      property('sourceSize.width', 'int', 0),
+      property('sourceSize.height', 'int', 0),
+      property('paintedWidth', 'real', 0, { readonly: true }),
+      property('paintedHeight', 'real', 0, { readonly: true }),
+      property('horizontalAlignment', 'var', 'Image.AlignHCenter'),
+      property('verticalAlignment', 'var', 'Image.AlignVCenter'),
+      property('cache', 'bool', true),
+      property('asynchronous', 'bool', false),
+      property('mirror', 'bool', false),
+      property('mipmap', 'bool', false),
     ],
   },
   {
@@ -219,6 +362,20 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('contentWidth', 'real', 0),
       property('contentHeight', 'real', 0),
       property('interactive', 'bool', true),
+      property('flickableDirection', 'var', 'Flickable.AutoFlickIfNeeded'),
+      property('maximumFlickVelocity', 'real', 2500),
+      property('flickDeceleration', 'real', 1500),
+      property('atXBeginning', 'bool', true, { readonly: true }),
+      property('atXEnd', 'bool', false, { readonly: true }),
+      property('atYBeginning', 'bool', true, { readonly: true }),
+      property('atYEnd', 'bool', false, { readonly: true }),
+      property('flicking', 'bool', false, { readonly: true }),
+      property('flickingHorizontally', 'bool', false, { readonly: true }),
+      property('flickingVertically', 'bool', false, { readonly: true }),
+      property('dragging', 'bool', false, { readonly: true }),
+      property('moving', 'bool', false, { readonly: true }),
+      property('originX', 'real', 0, { readonly: true }),
+      property('originY', 'real', 0, { readonly: true }),
     ],
     signals: ['flickStarted', 'flickEnded'],
   },
@@ -233,6 +390,8 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('propagateComposedEvents', 'bool', false),
       property('containsMouse', 'bool', false, { readonly: true }),
       property('pressed', 'bool', false, { readonly: true }),
+      property('mouseX', 'real', 0, { readonly: true }),
+      property('mouseY', 'real', 0, { readonly: true }),
     ],
     signals: ['clicked', 'doubleClicked', 'entered', 'exited', 'pressed', 'released', 'canceled', 'positionChanged'],
   },
@@ -255,9 +414,9 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
     name: 'ApplicationWindow',
     baseType: 'Window',
     properties: [
-      property('menuBar', 'var', null),
-      property('header', 'var', null),
-      property('footer', 'var', null),
+      property('menuBar', 'MenuBar', null),
+      property('header', 'Item', null),
+      property('footer', 'Item', null),
     ],
   },
   {
@@ -328,6 +487,12 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('highlight', 'var', null),
       property('highlightItem', 'var', null, { readonly: true }),
       property('snapMode', 'var', 'ListView.NoSnap'),
+      property('header', 'var', null),
+      property('footer', 'var', null),
+      property('headerItem', 'var', null, { readonly: true }),
+      property('footerItem', 'var', null, { readonly: true }),
+      property('layoutDirection', 'var', 'Qt.LeftToRight'),
+      property('verticalLayoutDirection', 'var', 'ListView.TopToBottom'),
     ],
     signals: ['activated'],
   },
@@ -509,12 +674,16 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   {
     name: 'RowLayout',
     baseType: 'Item',
-    properties: [property('spacing', 'real', 5)],
+    properties: [property('spacing', 'real', 5), property('layoutDirection', 'var', 'Qt.LeftToRight')],
   },
   {
     name: 'ColumnLayout',
     baseType: 'Item',
-    properties: [property('spacing', 'real', 5)],
+    properties: [
+      property('spacing', 'real', 5),
+      property('layoutDirection', 'var', 'Qt.LeftToRight'),
+      property('uniformCellSizes', 'bool', false),
+    ],
   },
   {
     name: 'GridLayout',
@@ -532,6 +701,12 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
     baseType: 'Item',
     properties: [
       property('padding', 'real', 0),
+      property('topPadding', 'real', 0),
+      property('bottomPadding', 'real', 0),
+      property('leftPadding', 'real', 0),
+      property('rightPadding', 'real', 0),
+      property('availableWidth', 'real', 0, { readonly: true }),
+      property('availableHeight', 'real', 0, { readonly: true }),
       property('hovered', 'bool', false, { readonly: true }),
       property('pressed', 'bool', false, { readonly: true }),
       property('focusPolicy', 'var', 'Qt.StrongFocus'),
@@ -617,20 +792,38 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
     },
   },
   { name: 'Switch', baseType: 'CheckBox' },
-  { name: 'TabButton', baseType: 'Button' },
+  {
+    name: 'TabButton',
+    baseType: 'Button',
+    properties: [
+      property('checkable', 'bool', true),
+      property('autoExclusive', 'bool', true),
+    ],
+  },
   {
     name: 'TabBar',
     baseType: 'Control',
-    properties: [property('currentIndex', 'int', 0)],
+    properties: [
+      property('currentIndex', 'int', 0),
+      property('implicitHeight', 'real', 34, { readonly: true }),
+    ],
+    signals: ['activated'],
   },
   {
     name: 'TextField',
     baseType: 'Control',
     properties: [
       property('text', 'string', ''),
+      property('color', 'color', '#000000'),
       property('placeholderText', 'string', ''),
+      property('placeholderTextColor', 'color', '#80000000'),
       property('readOnly', 'bool', false),
       property('echoMode', 'var', 'TextInput.Normal'),
+      property('cursorPosition', 'int', 0),
+      property('length', 'int', 0, { readonly: true }),
+      property('selectedText', 'string', '', { readonly: true }),
+      property('selectionStart', 'int', 0, { readonly: true }),
+      property('selectionEnd', 'int', 0, { readonly: true }),
     ],
     signals: ['accepted', 'editingFinished'],
   },
@@ -709,8 +902,11 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
     name: 'ComboBox',
     baseType: 'Control',
     properties: [
-      property('model', 'var', []), property('currentIndex', 'int', -1),
+      property('model', 'var', []), property('count', 'int', 0, { readonly: true }),
+      property('currentIndex', 'int', -1),
       property('currentText', 'string', '', { readonly: true }),
+      property('displayText', 'string', '', { readonly: true }),
+      property('textRole', 'string', ''),
       property('editable', 'bool', false), property('placeholderText', 'string', ''),
     ],
     signals: ['activated'],
@@ -723,9 +919,9 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('value', 'real', 0), property('indeterminate', 'bool', false),
     ],
   },
-  { name: 'Page', baseType: 'Control', properties: [property('title', 'string', '')] },
   { name: 'Pane', baseType: 'Control' },
-  { name: 'Frame', baseType: 'Control' },
+  { name: 'Page', baseType: 'Pane', properties: [property('title', 'string', '')] },
+  { name: 'Frame', baseType: 'Pane' },
   { name: 'GroupBox', baseType: 'Frame', properties: [property('title', 'string', '')] },
   { name: 'BusyIndicator', baseType: 'Control', properties: [property('running', 'bool', true)] },
   {
@@ -737,15 +933,16 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   { name: 'TimePicker', baseType: 'Control', properties: [property('time', 'string', '00:00'), property('locale', 'string', 'en-US')] },
   {
     name: 'ScrollIndicator',
-    baseType: 'Item',
+    baseType: 'Control',
     properties: [property('position', 'real', 0), property('size', 'real', 0), property('active', 'bool', false)],
   },
   {
     name: 'ScrollBar',
-    baseType: 'Item',
+    baseType: 'Control',
     properties: [
       property('orientation', 'var', 'Qt.Vertical'), property('position', 'real', 0),
-      property('size', 'real', 0), property('active', 'bool', false),
+      property('size', 'real', 0), property('stepSize', 'real', 0), property('active', 'bool', false),
+      property('policy', 'var', 'ScrollBar.AsNeeded'),
     ],
   },
   { name: 'StackLayout', baseType: 'Item', properties: [property('currentIndex', 'int', 0)] },
@@ -758,6 +955,43 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('currentItem', 'var', null, { readonly: true }), property('empty', 'bool', true, { readonly: true }),
       property('busy', 'bool', false, { readonly: true }), property('initialItem', 'var', null),
     ],
+    signals: ['pushed', 'popped', 'replaced'],
+    methods: {
+      push(item) {
+        const depth = Number(this.getProperty('depth')) + 1
+        this.setInternalProperty('depth', depth)
+        this.setInternalProperty('currentIndex', depth - 1)
+        this.setInternalProperty('empty', false)
+        if (item instanceof QmlObject) this.setInternalProperty('currentItem', item)
+        this.emitSignal('pushed', item)
+        return item
+      },
+      pop(item) {
+        const depth = Number(this.getProperty('depth'))
+        if (depth <= 1) return null
+        const newDepth = depth - 1
+        this.setInternalProperty('depth', newDepth)
+        this.setInternalProperty('currentIndex', newDepth - 1)
+        this.setInternalProperty('empty', newDepth === 0)
+        const popped = this.getProperty('currentItem')
+        this.emitSignal('popped', popped)
+        return popped
+      },
+      replace(target, item) {
+        const resolved = item instanceof QmlObject ? item : target
+        if (resolved instanceof QmlObject) this.setInternalProperty('currentItem', resolved)
+        this.emitSignal('replaced', resolved)
+        return resolved
+      },
+      clear() {
+        this.setInternalProperty('depth', 0)
+        this.setInternalProperty('currentIndex', -1)
+        this.setInternalProperty('currentItem', null)
+        this.setInternalProperty('empty', true)
+      },
+      get() { return null },
+      find() { return null },
+    },
   },
   { name: 'SplitView', baseType: 'Control', properties: [property('orientation', 'var', 'Qt.Horizontal')] },
   {
@@ -822,9 +1056,17 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
     ],
   },
   { name: 'MenuItem', baseType: 'Button', properties: [property('shortcut', 'string', '')] },
-  { name: 'MenuSeparator', baseType: 'Item', properties: [property('implicitHeight', 'real', 1, { readonly: true })] },
-  { name: 'MenuBar', baseType: 'Control' },
-  { name: 'ToolBar', baseType: 'Control' },
+  { name: 'MenuSeparator', baseType: 'Control', properties: [property('implicitHeight', 'real', 1, { readonly: true })] },
+  {
+    name: 'MenuBar',
+    baseType: 'Control',
+    properties: [property('implicitHeight', 'real', 32, { readonly: true })],
+  },
+  {
+    name: 'ToolBar',
+    baseType: 'Control',
+    properties: [property('implicitHeight', 'real', 40, { readonly: true })],
+  },
   {
     name: 'Action',
     baseType: 'QtObject',

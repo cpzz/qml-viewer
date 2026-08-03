@@ -12,6 +12,19 @@ describe('built-in QML types', () => {
     expect(rectangle.getProperty('opacity')).toBe(1)
     expect(rectangle.getProperty('color')).toBe('white')
     expect(rectangle.getProperty('border.color')).toBe('black')
+    expect(rectangle.getProperty('Drag.active')).toBe(false)
+    expect(rectangle.getProperty('Keys.enabled')).toBe(true)
+    expect(rectangle.hasMethod('ensurePolished')).toBe(true)
+  })
+
+  it('dumps the inherited visual Item tree deterministically', () => {
+    const registry = createBuiltinQmlTypeRegistry()
+    const root = registry.create('Item')
+    const child = registry.create('Rectangle', root)
+    root.setProperty('objectName', 'root')
+    child.setProperty('objectName', 'panel')
+
+    expect(root.callMethod('dumpItemTree')).toBe('Item root\n  Rectangle panel')
   })
 
   it('routes Item children through the inherited data default property', () => {

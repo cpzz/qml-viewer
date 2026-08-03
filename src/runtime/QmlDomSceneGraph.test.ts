@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { parseQML } from '../renderer/parser'
 import { createBuiltinQmlTypeRegistry } from './BuiltinQmlTypes'
@@ -10,8 +12,24 @@ import { QmlJsEngine } from './QmlJsEngine'
 import { QmlItemViewController } from './QmlItemViewController'
 import { QmlLoaderController } from './QmlLoaderController'
 import { QmlObject } from './QmlObject'
+import { parseQmlColor } from './QmlColor'
 
 describe('QmlDomSceneGraph', () => {
+  function normalizeCssColor(value: string): string {
+    const element = document.createElement('span')
+    element.style.color = ''
+    element.style.color = value
+    return element.style.color.replaceAll(' ', '')
+  }
+
+  function expectBackgroundColor(actual: string | undefined, expected: string): void {
+    expect((actual ?? '').replaceAll(' ', '')).toBe(normalizeCssColor(expected))
+  }
+
+  function expectQmlColorValue(actual: unknown, expected: string): void {
+    expect(parseQmlColor(String(actual))).toEqual(parseQmlColor(expected))
+  }
+
   function createScene() {
     const qmlDocument = instantiateQmlDocument(parseQML(`
       Item {
@@ -40,6 +58,72 @@ describe('QmlDomSceneGraph', () => {
     sceneGraph.mount(qmlDocument, container)
     return { qmlDocument, container, sceneGraph }
   }
+
+  it('renders a root ColumnLayout from implicit child size hints', async () => {
+    const qmlDocument = activateQmlDocument(parseQML(`
+      ColumnLayout {
+        id: layout
+        spacing: 2
+        Rectangle { id: first; Layout.preferredWidth: 40; Layout.preferredHeight: 40; color: "red" }
+        Rectangle { id: second; Layout.preferredWidth: 40; Layout.preferredHeight: 70; color: "green" }
+        Rectangle {
+          id: third
+          Layout.fillHeight: true
+          Layout.preferredWidth: 70
+          Layout.preferredHeight: 40
+          color: "blue"
+        }
+      }
+    `), await QmlJsEngine.create())
+    const container = document.createElement('main')
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, container)
+
+    expect(qmlDocument.ids.get('layout')!.getProperty('implicitWidth')).toBe(70)
+    expect(qmlDocument.ids.get('layout')!.getProperty('implicitHeight')).toBe(154)
+    expect(sceneGraph.getElement(qmlDocument.ids.get('layout')!)?.style.width).toBe('70px')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('first')!)?.style.height).toBe('40px')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('second')!)?.style.height).toBe('70px')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('third')!)?.style.height).toBe('40px')
+    sceneGraph.dispose()
+    qmlDocument.dispose()
+  })
+
+  it('renders the Layout attached-property validation fixture', async () => {
+    const source = readFileSync(resolve(process.cwd(), 'examples/layout/ColumnLayout.qml'), 'utf8')
+    const qmlDocument = activateQmlDocument(parseQML(source), await QmlJsEngine.create())
+    const container = document.createElement('main')
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, container)
+
+    expect(qmlDocument.ids.get('minimumBox')?.getProperty('width')).toBe(100)
+    expect(qmlDocument.ids.get('minimumBox')?.getProperty('height')).toBe(52)
+    expect(qmlDocument.ids.get('minimumText')?.getProperty('text')).toBe('minimum\n100 x 52')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('minimumText')!)?.textContent).toBe('minimum\n100 x 52')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('minimumText')!)?.style.whiteSpace).toBe('pre')
+    expect(qmlDocument.ids.get('maximumBox')?.getProperty('width')).toBe(120)
+    expect(qmlDocument.ids.get('maximumBox')?.getProperty('height')).toBe(48)
+    expect(qmlDocument.ids.get('fillBox')?.getProperty('height')).toBe(76)
+    expect(qmlDocument.ids.get('alignTopBox')?.getProperty('y')).toBe(0)
+    expect(sceneGraph.getElement(qmlDocument.ids.get('marginBox')!)?.style.marginLeft).toBe('12px')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('individualMarginBox')!)?.style.marginLeft).toBe('24px')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('individualMarginBox')!)?.style.marginBottom).toBe('18px')
+    expect(qmlDocument.ids.get('horizontalTwo')!.getProperty('width')).toBeCloseTo(
+      Number(qmlDocument.ids.get('horizontalOne')!.getProperty('width')) * 2,
+    )
+    expect(qmlDocument.ids.get('verticalTwo')!.getProperty('height')).toBeCloseTo(
+      Number(qmlDocument.ids.get('verticalOne')!.getProperty('height')) * 2,
+    )
+    expect(qmlDocument.ids.get('directionLeft')?.getProperty('x')).toBe(410)
+    expect(qmlDocument.ids.get('directionRight')?.getProperty('x')).toBe(0)
+    expect(sceneGraph.getElement(qmlDocument.ids.get('directionLeft')!)?.style.alignSelf).toBe('flex-end')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('directionRight')!)?.style.alignSelf).toBe('flex-start')
+    expect(qmlDocument.ids.get('uniformShort')?.getProperty('height')).toBe(50)
+    expect(qmlDocument.ids.get('uniformTall')?.getProperty('height')).toBe(50)
+    expect(qmlDocument.ids.get('uniformTall')?.getProperty('y')).toBe(56)
+    sceneGraph.dispose()
+    qmlDocument.dispose()
+  })
 
   it('projects ApplicationWindow as a menuBar-header-content-footer shell', () => {
     const qmlDocument = instantiateQmlDocument(parseQML(`
@@ -193,10 +277,65 @@ describe('QmlDomSceneGraph', () => {
 
     expect(container.querySelectorAll('.qml-runtime-node')).toHaveLength(3)
     expect(sceneGraph.getElement(root)?.style.width).toBe('320px')
-    expect(sceneGraph.getElement(panel)?.style.backgroundColor).toBe('#ff0000')
+    expectBackgroundColor(sceneGraph.getElement(panel)?.style.backgroundColor, '#ff0000')
     expect(sceneGraph.getElement(panel)?.style.left).toBe('10px')
     expect(sceneGraph.getElement(label)?.textContent).toBe('Hello')
     expect(sceneGraph.getElement(label)?.parentElement).toBe(sceneGraph.getElement(panel))
+  })
+
+  it('lets nested DOM elements compose local opacity exactly once', () => {
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      Item {
+        id: parentItem
+        opacity: 0.5
+        Rectangle { id: childItem; opacity: 0.5 }
+      }
+    `))
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, document.createElement('main'))
+
+    expect(sceneGraph.getElement(qmlDocument.ids.get('parentItem')!)?.style.opacity).toBe('0.5')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('childItem')!)?.style.opacity).toBe('0.5')
+    sceneGraph.dispose()
+  })
+
+  it('places activeFocusOnTab Items in the DOM tab order', () => {
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      Item {
+        Item { id: skipped }
+        Item { id: tabItem; activeFocusOnTab: true }
+      }
+    `))
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, document.createElement('main'))
+
+    expect(sceneGraph.getElement(qmlDocument.ids.get('skipped')!)?.tabIndex).toBe(-1)
+    expect(sceneGraph.getElement(qmlDocument.ids.get('tabItem')!)?.tabIndex).toBe(0)
+    sceneGraph.dispose()
+  })
+
+  it('uses control theme colors unless a palette role is explicitly assigned', async () => {
+    const qmlDocument = activateQmlDocument(parseQML(`
+      Item {
+        Button { id: defaultButton; text: "Default" }
+        Item {
+          palette.button: "#123456"
+          palette.buttonText: "#abcdef"
+          Button { id: customButton; text: "Custom" }
+        }
+      }
+    `), await QmlJsEngine.create())
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, document.createElement('main'))
+    const defaultButton = sceneGraph.getElement(qmlDocument.ids.get('defaultButton')!)!
+    const customButton = sceneGraph.getElement(qmlDocument.ids.get('customButton')!)!
+
+    expect(defaultButton.style.backgroundColor).toBe('')
+    expect(defaultButton.style.color).toBe('')
+    expect(customButton.style.backgroundColor).toBe('rgb(18, 52, 86)')
+    expect(customButton.style.color).toBe('rgb(171, 205, 239)')
+    sceneGraph.dispose()
+    qmlDocument.dispose()
   })
 
   it('preserves caller-defined container positioning', () => {
@@ -223,7 +362,7 @@ describe('QmlDomSceneGraph', () => {
     label.setProperty('text', 'Updated')
 
     expect(sceneGraph.getElement(panel)).toBe(panelElement)
-    expect(panelElement?.style.backgroundColor).toBe('#0000ff')
+    expectBackgroundColor(panelElement?.style.backgroundColor, '#0000ff')
     expect(panelElement?.style.left).toBe('40px')
     expect(sceneGraph.getElement(label)).toBe(labelElement)
     expect(labelElement?.textContent).toBe('Updated')
@@ -242,8 +381,8 @@ describe('QmlDomSceneGraph', () => {
     const translucent = qmlDocument.ids.get('translucent')!
     const named = qmlDocument.ids.get('named')!
     // Qt 的 #AARRGGBB（半透明红）→ 浏览器 CSS #RRGGBBAA
-    expect(sceneGraph.getElement(translucent)?.style.backgroundColor).toBe('#ff000080')
-    expect(sceneGraph.getElement(named)?.style.backgroundColor).toBe('#ff0000')
+    expectBackgroundColor(sceneGraph.getElement(translucent)?.style.backgroundColor, '#ff000080')
+    expectBackgroundColor(sceneGraph.getElement(named)?.style.backgroundColor, '#ff0000')
     sceneGraph.dispose()
   })
 
@@ -453,11 +592,11 @@ describe('QmlDomSceneGraph', () => {
     const panel = qmlDocument.ids.get('panel')!
     const panelElement = sceneGraph.getElement(panel)!
 
-    expect(panelElement.style.backgroundColor).toBe('#ff0000')
+    expectBackgroundColor(panelElement.style.backgroundColor, '#ff0000')
     root.setProperty('accent', 'blue')
 
     expect(sceneGraph.getElement(panel)).toBe(panelElement)
-    expect(panelElement.style.backgroundColor).toBe('#0000ff')
+    expectBackgroundColor(panelElement.style.backgroundColor, '#0000ff')
   })
 
   it('recomputes fill and center anchors when parent geometry changes', () => {
@@ -636,7 +775,7 @@ describe('QmlDomSceneGraph', () => {
     const itemElement = sceneGraph.getElement(item)
 
     expect(item.parent).toBe(loader)
-    expect(itemElement?.style.backgroundColor).toBe('#008000')
+    expectBackgroundColor(itemElement?.style.backgroundColor, '#008000')
     expect(itemElement?.parentElement).toBe(sceneGraph.getElement(loader))
 
     loader.setProperty('sourceComponent', null)
@@ -1130,18 +1269,18 @@ describe('QmlDomSceneGraph', () => {
     const fillElement = sceneGraph.getElement(fill)!
 
     // 初始：进度条蓝色；自定义 background 时 DelayButton 自身不叠加默认主题色渐变
-    expect(fillElement.style.backgroundColor).toBe('#2196f3')
+    expectBackgroundColor(fillElement.style.backgroundColor, '#2196f3')
     expect(element.style.backgroundImage).toBe('')
 
     element.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
     vi.advanceTimersByTime(48)
     // 未到 100%：进度条仍为蓝色
-    expect(fillElement.style.backgroundColor).toBe('#2196f3')
+    expectBackgroundColor(fillElement.style.backgroundColor, '#2196f3')
     expect(element.style.backgroundImage).toBe('')
 
     vi.advanceTimersByTime(120)
     // 动画完成：progress=1 → color 绑定刷新为绿色
-    expect(fillElement.style.backgroundColor).toBe('#4caf50')
+    expectBackgroundColor(fillElement.style.backgroundColor, '#4caf50')
 
     sceneGraph.dispose()
     vi.useRealTimers()
@@ -1494,10 +1633,10 @@ describe('QmlDomSceneGraph', () => {
     expect(fillHsla.getProperty('color')).toMatch(/^#[0-9a-fA-F]{8}$/)   // Qt.hsla → Qt 格式
 
     // 渲染：CSS 格式（alpha 最低位）
-    expect(sceneGraph.getElement(fillNamed)!.style.backgroundColor).toBe('#4682b4')        // steelblue
-    expect(sceneGraph.getElement(fillRgba)!.style.backgroundColor).toBe('#0099ff80')       // 半透明蓝
-    expect(sceneGraph.getElement(fillArgb)!.style.backgroundColor).toBe('#8090cbf9')       // 半透明浅蓝
-    expect(sceneGraph.getElement(fillHsla)!.style.backgroundColor).toMatch(/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/)
+    expectBackgroundColor(sceneGraph.getElement(fillNamed)!.style.backgroundColor, '#4682b4')        // steelblue
+    expectBackgroundColor(sceneGraph.getElement(fillRgba)!.style.backgroundColor, '#0099ff80')       // 半透明蓝
+    expectBackgroundColor(sceneGraph.getElement(fillArgb)!.style.backgroundColor, 'rgba(144, 203, 249, 0.5)')       // 半透明浅蓝
+    expectBackgroundColor(sceneGraph.getElement(fillHsla)!.style.backgroundColor, 'rgba(66, 156, 240, 0.55)')
 
     // 驱动 progress 到完成：颜色切换为目标色（Behavior 动画结束后为 Qt 格式小写 hex）
     named.setInternalProperty('progress', 1)
@@ -1505,12 +1644,12 @@ describe('QmlDomSceneGraph', () => {
     argb.setInternalProperty('progress', 1)
     hsla.setInternalProperty('progress', 1)
     vi.advanceTimersByTime(250)
-    expect(fillNamed.getProperty('color')).toBe('#ff6347')     // tomato
-    expect(fillRgba.getProperty('color')).toBe('#e6ff4d00')    // Qt.rgba(1, 0.3, 0, 0.9)
-    expect(fillArgb.getProperty('color')).toBe('#e64caf50')    // #E64CAF50
+    expectQmlColorValue(fillNamed.getProperty('color'), '#ff6347')     // tomato
+    expectQmlColorValue(fillRgba.getProperty('color'), '#e6ff4d00')    // Qt.rgba(1, 0.3, 0, 0.9)
+    expectQmlColorValue(fillArgb.getProperty('color'), '#e64caf50')    // #E64CAF50
     expect(fillHsla.getProperty('color')).toMatch(/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/)
     // 渲染目标色
-    expect(sceneGraph.getElement(fillNamed)!.style.backgroundColor).toBe('#ff6347')        // tomato
+    expectBackgroundColor(sceneGraph.getElement(fillNamed)!.style.backgroundColor, '#ff6347')        // tomato
 
     sceneGraph.dispose()
     vi.useRealTimers()

@@ -64,6 +64,7 @@ export class QmlExecutionEnvironment {
     const objects = new Map(ids)
     const objectIds = new Map<QmlObject, string>([...ids].map(([id, object]) => [object, id]))
     const propertyOwners = new Map<string, QmlObject>()
+    const propertyGroupOwners = new Map<string, QmlObject>()
     const hierarchy: QmlObject[] = []
     let current: QmlObject | null = context
     while (current) {
@@ -73,6 +74,8 @@ export class QmlExecutionEnvironment {
     for (const object of hierarchy) {
       for (const name of object.getPropertyNames()) {
         propertyOwners.set(name, object)
+        const separator = name.indexOf('.')
+        if (separator > 0) propertyGroupOwners.set(name.slice(0, separator), object)
       }
     }
     // Qt Quick Controls 的 `control` 引用：指向最近的外层 Control 对象
@@ -113,15 +116,28 @@ export class QmlExecutionEnvironment {
       scope: Object.fromEntries(Object.entries(locals).map(([name, value]) => [name, toScriptValue(value)])),
       objectIds: [...ids.keys()],
       hostFunctions: Object.keys(allHostFunctions),
-      contextProperties: [...propertyOwners.keys(), 'parent', ...(controlObject ? ['control'] : [])],
+      contextProperties: [
+        ...propertyOwners.keys(),
+        ...propertyGroupOwners.keys(),
+        'parent',
+        ...(controlObject ? ['control'] : []),
+      ],
       getContextProperty: name => toBridgeValue(
         name === 'parent' ? context.parent
           : name === 'control' ? controlObject
-            : propertyOwners.get(name)?.getProperty(name),
+            : propertyGroupOwners.has(name) ? (() => {
+              const owner = propertyGroupOwners.get(name)
+              if (!owner) return undefined
+              const id = bridgeObjectId(owner)
+              if (!objects.has(id)) objects.set(id, owner)
+              return { __qmlObjectId: id, __qmlPropertyPrefix: `${name}.` }
+            })()
+              : propertyOwners.get(name)?.getProperty(name),
       ),
       setContextProperty: (name, value) => propertyOwners.get(name)?.setProperty(name, value),
       getObjectMemberKind: (id, name) => {
         const object = getObject(id)
+        if (object.getPropertyNames().some(propertyName => propertyName.startsWith(`${name}.`))) return 'group'
         if (object.hasProperty(name)) return 'property'
         if (object.hasMethod(name)) return 'method'
         if (object.hasSignal(name)) return 'signal'

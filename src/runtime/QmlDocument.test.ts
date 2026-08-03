@@ -6,6 +6,12 @@ import { QmlComponent } from './QmlComponent'
 import { QmlJsEngine } from './QmlJsEngine'
 
 describe('instantiateQmlDocument', () => {
+  it('decodes escaped newlines in string literals', () => {
+    const document = instantiateQmlDocument(parseQML('Text { id: label; text: "first\\nsecond" }'))
+
+    expect(document.ids.get('label')?.getProperty('text')).toBe('first\nsecond')
+  })
+
   it('creates an owned object tree and id registry', () => {
     const document = instantiateQmlDocument(parseQML(`
       Item {
@@ -253,6 +259,22 @@ describe('activateQmlDocument', () => {
     jsEngine = await QmlJsEngine.create()
   })
 
+  it('activates implicit sizing for a root ColumnLayout', () => {
+    const document = activateQmlDocument(parseQML(`
+      ColumnLayout {
+        id: layout
+        spacing: 2
+        Rectangle { Layout.preferredWidth: 40; Layout.preferredHeight: 40 }
+        Rectangle { Layout.preferredWidth: 70; Layout.preferredHeight: 70 }
+      }
+    `), jsEngine)
+    const layout = document.ids.get('layout')!
+
+    expect(layout.getProperty('implicitWidth')).toBe(70)
+    expect(layout.getProperty('implicitHeight')).toBe(112)
+    document.dispose()
+  })
+
   it('updates a child binding when a custom parent property changes', () => {
     const document = activateQmlDocument(parseQML(`
       Item {
@@ -270,6 +292,25 @@ describe('activateQmlDocument', () => {
     expect(label.getProperty('color')).toBe('red')
     root.setProperty('accent', 'blue')
     expect(label.getProperty('color')).toBe('blue')
+  })
+
+  it('ancestor functions are accessible in descendant property bindings', () => {
+    const document = activateQmlDocument(parseQML(`
+      Item {
+        function label(n) { return n > 0 ? "positive" : "zero" }
+        Item {
+          property int count: 2
+          Text {
+            id: result
+            text: label(parent.count)
+          }
+        }
+      }
+    `), jsEngine)
+    const result = document.ids.get('result')!
+
+    expect(result.getProperty('text')).toBe('positive')
+    document.dispose()
   })
 
   it('installs methods and signal handlers with parameters', () => {
@@ -331,6 +372,20 @@ describe('activateQmlDocument', () => {
     document.ids.get('input')?.emitSignal('clicked')
 
     expect(document.ids.get('root')?.getProperty('clickCount')).toBe(1)
+  })
+
+  it('connects attached Keys handlers to Item signals', () => {
+    const document = activateQmlDocument(parseQML(`
+      Item {
+        id: root
+        property int pressCount: 0
+        Keys.onPressed: { pressCount += 1 }
+      }
+    `), jsEngine)
+
+    document.ids.get('root')?.emitSignal('Keys.pressed', { key: 'Enter' })
+
+    expect(document.ids.get('root')?.getProperty('pressCount')).toBe(1)
   })
 
   it('activates declarative State and PropertyChanges objects', async () => {

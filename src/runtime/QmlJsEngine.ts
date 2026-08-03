@@ -25,7 +25,7 @@ export interface QmlJsLiveBridge {
   contextProperties: string[]
   getContextProperty(name: string): unknown
   setContextProperty(name: string, value: unknown): void
-  getObjectMemberKind(id: string, name: string): 'property' | 'method' | 'signal' | undefined
+  getObjectMemberKind(id: string, name: string): 'property' | 'group' | 'method' | 'signal' | undefined
   getObjectProperty(id: string, name: string): unknown
   setObjectProperty(id: string, name: string, value: unknown): void
   callObjectMethod(id: string, name: string, args: unknown[]): unknown
@@ -101,6 +101,9 @@ export class QmlJsEngine {
     `
     const [value, changedScope] = this.run(source) as [unknown, QmlJsScope]
     return { value, scope: changedScope }
+  }
+
+  dispose(): void {
   }
 
   evaluateLive(expression: string, bridge: QmlJsLiveBridge): unknown {
@@ -201,6 +204,10 @@ export class QmlJsEngine {
       // Orientation
       setNumber('Horizontal', 1)
       setNumber('Vertical', 2)
+      // LayoutDirection
+      setNumber('LeftToRight', 0)
+      setNumber('RightToLeft', 1)
+      setNumber('LayoutDirectionAuto', 2)
       // FocusPolicy
       setNumber('NoFocus', 0)
       setNumber('TabFocus', 1)
@@ -216,6 +223,11 @@ export class QmlJsEngine {
       setNumber('RightEdge', 2)
       setNumber('TopEdge', 4)
       setNumber('BottomEdge', 8)
+      // DropAction
+      setNumber('IgnoreAction', 0)
+      setNumber('CopyAction', 1)
+      setNumber('MoveAction', 2)
+      setNumber('LinkAction', 4)
 
       // Register Qt color helper functions (QML color value type)
       const installQtFunction = (name: string, fn: (values: unknown[]) => unknown) => {
@@ -302,6 +314,27 @@ export class QmlJsEngine {
       context.setProp(context.global, 'Qt', qtHandle)
       qtHandle.dispose()
 
+      const installNumberNamespace = (namespace: string, values: Record<string, number>) => {
+        const namespaceHandle = context.newObject()
+        for (const [name, value] of Object.entries(values)) {
+          context.newNumber(value).consume(handle => context.setProp(namespaceHandle, name, handle))
+        }
+        context.setProp(context.global, namespace, namespaceHandle)
+        namespaceHandle.dispose()
+      }
+      installNumberNamespace('Item', {
+        TopLeft: 0, Top: 1, TopRight: 2, Left: 3, Center: 4,
+        Right: 5, BottomLeft: 6, Bottom: 7, BottomRight: 8,
+      })
+      installNumberNamespace('Keys', { BeforeItem: 0, AfterItem: 1 })
+      installNumberNamespace('KeyNavigation', { BeforeItem: 0, AfterItem: 1 })
+      installNumberNamespace('Drag', { Internal: 0, Automatic: 1, None: 2 })
+      installNumberNamespace('ShaderEffectSource', {
+        Alpha: 0, RGB: 1, RGBA: 2, RGBA8: 3, RGBA16F: 4, RGBA32F: 5,
+        MirrorVertically: 1, MirrorHorizontally: 2,
+        ClampToEdge: 0, RepeatHorizontally: 1, RepeatVertically: 2, Repeat: 3,
+      })
+
       // Register qsTr() global function (returns input string as-is, no actual translation)
       const qsTrHandle = context.newFunction('qsTr', (...args) => {
         if (args.length === 0) return context.newString('')
@@ -372,23 +405,34 @@ export class QmlJsEngine {
           const __parse = value => JSON.parse(value);
           const __value = value => {
             const parsed = __parse(value);
-            return parsed && parsed.__qmlObjectId ? __makeProxy(parsed.__qmlObjectId) : parsed;
+            return parsed && parsed.__qmlObjectId
+              ? __makeProxy(parsed.__qmlObjectId, parsed.__qmlPropertyPrefix || '')
+              : parsed;
           };
-          const __makeProxy = id => __objects[id] ?? (__objects[id] = new Proxy({}, {
+          const __makeProxy = (id, prefix = '') => {
+            const key = id + ':' + prefix;
+            if (__objects[key]) return __objects[key];
+            const proxy = new Proxy({}, {
             get(_target, name) {
               const member = String(name);
-              if (member === 'toJSON') return () => ({ __qmlObjectId: id });
-              const kind = __parse(__qmlMemberKind(id, member));
-              if (kind === 'property') return __value(__qmlGet(id, member));
-              if (kind === 'method') return (...args) => __value(__qmlCall(id, member, JSON.stringify(args)));
-              if (kind === 'signal') return (...args) => { __qmlEmit(id, member, JSON.stringify(args)); };
+              if (member === 'toJSON') return () => ({ __qmlObjectId: id, __qmlPropertyPrefix: prefix });
+              const qualifiedMember = prefix + member;
+              const kind = __parse(__qmlMemberKind(id, qualifiedMember));
+              if (kind === 'property') return __value(__qmlGet(id, qualifiedMember));
+              if (kind === 'group') return __makeProxy(id, qualifiedMember + '.');
+              if (kind === 'method') return (...args) => __value(__qmlCall(id, qualifiedMember, JSON.stringify(args)));
+              if (kind === 'signal') return (...args) => { __qmlEmit(id, qualifiedMember, JSON.stringify(args)); };
             },
             set(_target, name, value) {
-              __qmlSet(id, String(name), JSON.stringify(value));
+              __qmlSet(id, prefix + String(name), JSON.stringify(value));
               return true;
             }
-          }));
-          ${JSON.stringify(bridge.objectIds)}.forEach(__makeProxy);
+            });
+            __objects[key] = proxy;
+            if (!prefix) __objects[id] = proxy;
+            return proxy;
+          };
+          ${JSON.stringify(bridge.objectIds)}.forEach(id => __makeProxy(id));
           const __hosts = Object.fromEntries(${JSON.stringify(bridge.hostFunctions)}.map(name => [
             name,
             (...args) => {

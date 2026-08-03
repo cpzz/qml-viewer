@@ -55,6 +55,10 @@ const QT_CONSTANTS: Record<string, number> = {
   // Orientation
   'Qt.Horizontal': 1,
   'Qt.Vertical': 2,
+  // LayoutDirection
+  'Qt.LeftToRight': 0,
+  'Qt.RightToLeft': 1,
+  'Qt.LayoutDirectionAuto': 2,
   // FocusPolicy
   'Qt.NoFocus': 0,
   'Qt.TabFocus': 1,
@@ -147,11 +151,14 @@ export class QmlObject {
   private readonly initializedProperties = new Set<string>()
   /** QML 声明中显式赋值过的属性（区别于默认值），用于 font 等继承属性 */
   private readonly explicitlySet = new Set<string>()
+  /** 由 QML 声明、绑定或运行时外部赋值的属性；内部计算与继承写入不计入。 */
+  private readonly assignedProperties = new Set<string>()
   private readonly listeners = new Map<string, Set<QmlPropertyListener>>()
   private readonly signals = new Map<string, Set<QmlSignalListener>>()
   private readonly methods = new Map<string, QmlMethod>()
   private defaultPropertyName: string | null = null
   private completed = false
+  private destroyed = false
 
   constructor(typeName: string, parent: QmlObject | null = null) {
     this.typeName = typeName
@@ -165,12 +172,28 @@ export class QmlObject {
 
   attachTo(parent: QmlObject): void {
     if (this.parentObject) throw new Error(`${this.typeName} already has a parent`)
-    if (parent === this || this.children.includes(parent)) {
+    if (parent === this || this.isAncestorOf(parent)) {
       throw new Error(`Cannot create circular ownership for ${this.typeName}`)
     }
     this.parentObject = parent
     parent.children.push(this)
     if (parent.hasSignal('childrenChanged')) parent.emitSignal('childrenChanged')
+    if (this.hasSignal('parentChanged')) this.emitSignal('parentChanged', parent)
+  }
+
+  reparentTo(parent: QmlObject | null): void {
+    if (parent === this.parentObject) return
+    if (parent && (parent === this || this.isAncestorOf(parent))) {
+      throw new Error(`Cannot create circular ownership for ${this.typeName}`)
+    }
+    const previousParent = this.parentObject
+    if (previousParent) this.detachFromParent(previousParent)
+    if (parent) {
+      this.parentObject = parent
+      parent.children.push(this)
+      if (parent.hasSignal('childrenChanged')) parent.emitSignal('childrenChanged')
+    }
+    if (this.hasSignal('parentChanged')) this.emitSignal('parentChanged', parent)
   }
 
   defineProperty(definition: QmlRuntimePropertyDefinition, replaceDefault = false): void {
@@ -268,6 +291,10 @@ export class QmlObject {
     return this.explicitlySet.has(name)
   }
 
+  isPropertyAssigned(name: string): boolean {
+    return this.assignedProperties.has(name)
+  }
+
   getProperty(name: string): unknown {
     const alias = this.aliases.get(name)
     if (alias) {
@@ -301,23 +328,13 @@ export class QmlObject {
   }
 
   destroy(): void {
+    if (this.destroyed) return
+    this.destroyed = true
     ;[...this.children].forEach(child => child.destroy())
     const parent = this.parentObject
-    if (parent) {
-      const index = parent.children.indexOf(this)
-      if (index >= 0) parent.children.splice(index, 1)
-      const defaultProperty = parent.defaultPropertyName
-      if (defaultProperty) {
-        const value = parent.getProperty(defaultProperty)
-        if (Array.isArray(value) && value.includes(this)) {
-          parent.setInternalProperty(defaultProperty, value.filter(item => item !== this))
-        } else if (value === this) {
-          parent.setInternalProperty(defaultProperty, null)
-        }
-      }
-      this.parentObject = null
-      if (parent.hasSignal('childrenChanged')) parent.emitSignal('childrenChanged')
-    }
+    if (parent) this.detachFromParent(parent)
+    if (this.hasSignal('parentChanged')) this.emitSignal('parentChanged', null)
+    if (this.hasSignal('destroyed')) this.emitSignal('destroyed', this)
     this.listeners.clear()
     this.signals.forEach(listeners => listeners.clear())
   }
@@ -382,15 +399,42 @@ export class QmlObject {
       throw new Error(`Cannot assign to readonly property ${name} on ${this.typeName}`)
     }
 
+    if (!internal) {
+      this.assignedProperties.add(name)
+      if (initializing) this.explicitlySet.add(name)
+    }
+
     const previousValue = this.values.get(name)
     if (Object.is(previousValue, value)) return
 
     this.values.set(name, value)
     this.initializedProperties.add(name)
-    if (initializing && !internal) this.explicitlySet.add(name)
     const change = { name, previousValue, value }
     const listeners = this.listeners.get(name)
     if (listeners) [...listeners].forEach(listener => listener(change))
     this.emitSignal(`${name}Changed`, value)
+  }
+
+  private isAncestorOf(object: QmlObject): boolean {
+    for (let current: QmlObject | null = object; current; current = current.parent) {
+      if (current === this) return true
+    }
+    return false
+  }
+
+  private detachFromParent(parent: QmlObject): void {
+    const index = parent.children.indexOf(this)
+    if (index >= 0) parent.children.splice(index, 1)
+    const defaultProperty = parent.defaultPropertyName
+    if (defaultProperty) {
+      const value = parent.getProperty(defaultProperty)
+      if (Array.isArray(value) && value.includes(this)) {
+        parent.setInternalProperty(defaultProperty, value.filter(item => item !== this))
+      } else if (value === this) {
+        parent.setInternalProperty(defaultProperty, null)
+      }
+    }
+    this.parentObject = null
+    if (parent.hasSignal('childrenChanged')) parent.emitSignal('childrenChanged')
   }
 }

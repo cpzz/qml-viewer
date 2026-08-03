@@ -3,6 +3,8 @@ import type { QmlDocumentInstance } from './QmlDocument'
 import { QmlCanvasContext } from './QmlCanvasContext'
 import { QmlEasing, resolveQmlEasing } from './QmlAnimation'
 import { bridgeObjectById, QmlObject } from './QmlObject'
+import { cssItemTransform, cssTransformOrigin } from './QmlItemGeometry'
+import { createDomGrabProvider, registerItemGrabProvider } from './QmlItemGrab'
 
 interface MountedNode {
   element: HTMLElement
@@ -147,9 +149,9 @@ function contentImplicitSize(object: QmlObject): { width: number; height: number
     const hasMeasured = measuredWidths.some(width => width !== null)
     return {
       // 优先用真实度量（可变字体下 0.6×charCount 会高估宽度 → 右侧留白）；不可用时回退估算
-      width: hasMeasured
+      width: Math.max(20, hasMeasured
         ? Math.ceil(Math.max(0, ...measuredWidths.map(width => width ?? 0)))
-        : Math.ceil(Math.max(0, ...lines.map(line => line.length)) * fontSize * 0.6),
+        : Math.ceil(Math.max(0, ...lines.map(line => line.length)) * fontSize * 0.6)),
       height: Math.ceil(Math.max(1, lines.length) * fontSize * 1.2),
     }
   }
@@ -169,7 +171,6 @@ function contentImplicitSize(object: QmlObject): { width: number; height: number
   if (object.typeName === 'Dial') return { width: 64, height: 64 }
   if (object.typeName === 'Tumbler') return { width: 80, height: 72 }
   if (object.typeName === 'BusyIndicator') return { width: 24, height: 24 }
-  if (object.typeName === 'TabBar') return { width: 120, height: 34 }
   if (object.typeName === 'StackLayout') return { width: 120, height: 24 }
   if (object.typeName === 'HorizontalHeaderView') return { width: 120, height: 30 }
   return null
@@ -197,6 +198,13 @@ function focusPolicyAllows(policy: unknown, kind: 'tab' | 'click'): boolean {
   return value.includes('StrongFocus') || value.includes(kind === 'tab' ? 'TabFocus' : 'ClickFocus')
 }
 
+function isPropertyAssignedInHierarchy(object: QmlObject, name: string): boolean {
+  for (let current: QmlObject | null = object; current; current = current.parent) {
+    if (current.hasProperty(name) && current.isPropertyAssigned(name)) return true
+  }
+  return false
+}
+
 function orderedVisualChildren(object: QmlObject): QmlObject[] {
   const background = object.hasProperty('background') ? object.getProperty('background') : null
   const contentItem = object.hasProperty('contentItem') ? object.getProperty('contentItem') : null
@@ -220,9 +228,87 @@ const layoutTypes = new Set(['RowLayout', 'ColumnLayout', 'GridLayout', 'Flow'])
 const contentContainerTypes = new Set(['Page', 'Pane', 'Frame', 'GroupBox'])
 const viewportContainerTypes = new Set(['Flickable', 'SwipeView', 'StackView'])
 
+function layoutMarginValue(object: QmlObject, side: 'left' | 'right' | 'top' | 'bottom'): number {
+  const individual = Number(object.getProperty(`Layout.${side}Margin`))
+  return individual >= 0 ? individual : Math.max(0, Number(object.getProperty('Layout.margins')) || 0)
+}
+
 function popupPolicyAllows(policy: unknown, kind: 'outside' | 'escape'): boolean {
   if (typeof policy === 'number') return (policy & (kind === 'outside' ? 1 : 2)) !== 0
   return String(policy).includes(kind === 'outside' ? 'CloseOnPressOutside' : 'CloseOnEscape')
+}
+
+function effectiveItemHeight(object: QmlObject, depth = 0): number {
+  if (depth > 6) return 0
+  const explicitHeight = Number(object.getProperty('height')) || 0
+  if (explicitHeight > 0) return explicitHeight
+
+  const implicitHeight = Number(object.getProperty('implicitHeight')) || 0
+  if (implicitHeight > 0) return implicitHeight
+
+  const contentHeight = contentImplicitSize(object)?.height ?? 0
+  let childrenHeight = 0
+  for (const child of orderedVisualChildren(object)) {
+    if (!child.getProperty('visible')) continue
+    const childY = Number(child.getProperty('y')) || 0
+    childrenHeight = Math.max(childrenHeight, childY + effectiveItemHeight(child, depth + 1))
+  }
+  return Math.max(contentHeight, childrenHeight)
+}
+
+function applicationWindowChromeHeights(window: QmlObject): {
+  menuBar: number
+  header: number
+  footer: number
+} {
+  const strip = (key: 'menuBar' | 'header' | 'footer') => {
+    const item = window.getProperty(key)
+    if (!(item instanceof QmlObject)) return 0
+    if (!item.getProperty('visible')) return 0
+    return effectiveItemHeight(item)
+  }
+  return {
+    menuBar: strip('menuBar'),
+    header: strip('header'),
+    footer: strip('footer'),
+  }
+}
+
+function isApplicationWindowChromeChild(object: QmlObject): boolean {
+  const parent = object.parent
+  if (!parent || parent.typeName !== 'ApplicationWindow') return false
+  return object === parent.getProperty('menuBar')
+    || object === parent.getProperty('header')
+    || object === parent.getProperty('footer')
+}
+
+function applicationWindowGridRows(window: QmlObject): {
+  menuBarRow: number
+  headerRow: number
+  contentRow: number
+  footerRow: number
+  template: string
+} {
+  const hasMenuBar = window.getProperty('menuBar') instanceof QmlObject
+    && window.getProperty('menuBar')?.getProperty('visible') !== false
+  const hasHeader = window.getProperty('header') instanceof QmlObject
+    && window.getProperty('header')?.getProperty('visible') !== false
+  const hasFooter = window.getProperty('footer') instanceof QmlObject
+    && window.getProperty('footer')?.getProperty('visible') !== false
+
+  let row = 1
+  const menuBarRow = hasMenuBar ? row++ : -1
+  const headerRow = hasHeader ? row++ : -1
+  const contentRow = row++
+  const footerRow = hasFooter ? row++ : -1
+
+  const rows: string[] = []
+  if (hasMenuBar) rows.push('auto')
+  if (hasHeader) rows.push('auto')
+  rows.push('minmax(0, 1fr)')
+  if (hasFooter) rows.push('auto')
+
+  return { menuBarRow, headerRow, contentRow, footerRow, template: rows.join(' ') }
 }
 
 export class QmlDomSceneGraph {
@@ -350,8 +436,18 @@ export class QmlDomSceneGraph {
       this.updateBranch(object)
       if (name === 'item' || name === 'background' || name === 'contentItem') this.syncChildren(object, element)
     }))
+    unsubscribe.push(registerItemGrabProvider(object, createDomGrabProvider(element)))
     if (object.hasSignal('childrenChanged')) {
       unsubscribe.push(object.connectSignal('childrenChanged', () => this.syncChildren(object, element)))
+    }
+    // Qt 语义：直接赋值 checked 时同步 checkState（DOM 点击以外的路径，如 QML handler 赋值）
+    if (object.typeName === 'CheckBox' && object.hasProperty('checkState')) {
+      unsubscribe.push(object.onPropertyChanged('checked', ({ value }) => {
+        const expected = Boolean(value) ? 2 : 0
+        if (Number(object.getProperty('checkState')) !== expected) {
+          object.setInternalProperty('checkState', expected)
+        }
+      }))
     }
     // 差异3修复：订阅兄弟锚定目标（anchors.left/centerIn 等指向的兄弟对象）的
     // 几何变化，兄弟尺寸/位置变了 → 重算本对象的位置尺寸。
@@ -385,7 +481,11 @@ export class QmlDomSceneGraph {
       object.setInternalProperty('height', geometry.height)
     }
     if (object.hasProperty('background') && object.hasProperty('contentItem')) {
-      const padding = Number(object.getProperty('padding')) || 0
+      const p = Number(object.getProperty('padding')) || 0
+      const left = object.isPropertyAssigned('leftPadding') ? Number(object.getProperty('leftPadding')) : p
+      const right = object.isPropertyAssigned('rightPadding') ? Number(object.getProperty('rightPadding')) : p
+      const top = object.isPropertyAssigned('topPadding') ? Number(object.getProperty('topPadding')) : p
+      const bottom = object.isPropertyAssigned('bottomPadding') ? Number(object.getProperty('bottomPadding')) : p
       const background = object.getProperty('background')
       const contentItem = object.getProperty('contentItem')
       if (background instanceof QmlObject) {
@@ -395,10 +495,14 @@ export class QmlDomSceneGraph {
         background.setInternalProperty('height', geometry.height)
       }
       if (contentItem instanceof QmlObject) {
-        contentItem.setInternalProperty('x', padding)
-        contentItem.setInternalProperty('y', padding)
-        contentItem.setInternalProperty('width', Math.max(0, geometry.width - padding * 2))
-        contentItem.setInternalProperty('height', Math.max(0, geometry.height - padding * 2))
+        contentItem.setInternalProperty('x', left)
+        contentItem.setInternalProperty('y', top)
+        contentItem.setInternalProperty('width', Math.max(0, geometry.width - left - right))
+        contentItem.setInternalProperty('height', Math.max(0, geometry.height - top - bottom))
+      }
+      if (object.hasProperty('availableWidth')) {
+        object.setInternalProperty('availableWidth', Math.max(0, geometry.width - left - right))
+        object.setInternalProperty('availableHeight', Math.max(0, geometry.height - top - bottom))
       }
     }
     const positionedByParent = ['Row', 'Column', 'RowLayout', 'ColumnLayout', 'GridLayout', 'Flow', 'SplitView', 'TabBar', 'ToolBar']
@@ -411,7 +515,7 @@ export class QmlDomSceneGraph {
     style.width = cssLength(geometry.width)
     style.height = cssLength(geometry.height)
     style.zIndex = cssValue(object.getProperty('z'))
-    style.opacity = cssValue(object.getProperty('opacity'))
+    style.opacity = cssValue(Math.max(0, Math.min(1, Number(object.getProperty('opacity')))))
     style.display = object.getProperty('visible') ? '' : 'none'
     if (object.parent && ['StackLayout', 'SwipeView', 'StackView'].includes(object.parent.typeName)) {
       const siblings = orderedVisualChildren(object.parent)
@@ -440,7 +544,14 @@ export class QmlDomSceneGraph {
       style.alignSelf = 'stretch'
     }
     if (object.getProperty('anchors.fill') && geometry.width <= 0) style.width = '100%'
-    if (object.getProperty('anchors.fill') && geometry.height <= 0) style.height = '100%'
+    // AppWindow-grid 子项已由专属块设置 height:100%；flex-column 子项中 height:100% 意为
+    // 铺满容器整高而非剩余空间，两种情况均跳过，避免与 flex 布局产生冲突
+    const parentIsFlexColumn = ['ColumnLayout', 'Column'].includes(object.parent?.typeName ?? '')
+    if (object.getProperty('anchors.fill') && geometry.height <= 0
+        && object.parent?.typeName !== 'ApplicationWindow'
+        && !parentIsFlexColumn) {
+      style.height = '100%'
+    }
     if (isPopup(object)) {
       style.pointerEvents = object.getProperty('visible') ? 'auto' : 'none'
       style.boxSizing = 'border-box'
@@ -454,8 +565,11 @@ export class QmlDomSceneGraph {
     if (['Flickable', 'ListView', 'GridView', 'PathView', 'ScrollView'].includes(object.typeName)) {
       style.overflow = object.typeName === 'ScrollView' ? 'auto' : 'hidden'
     }
-    style.transform = `rotate(${cssValue(object.getProperty('rotation'))}deg) scale(${cssValue(object.getProperty('scale'))})`
-    style.transformOrigin = 'center'
+    style.transform = cssItemTransform(object)
+    style.transformOrigin = cssTransformOrigin(object)
+    style.isolation = object.getProperty('layer.enabled') ? 'isolate' : ''
+    style.willChange = object.getProperty('layer.enabled') ? 'transform, opacity' : ''
+    style.imageRendering = object.getProperty('layer.enabled') && !object.getProperty('layer.smooth') ? 'pixelated' : 'auto'
     if (layoutTypes.has(object.typeName)) {
       const margin = Math.max(0, Number(object.getProperty('anchors.margins')) || 0)
       style.boxSizing = 'border-box'
@@ -463,53 +577,60 @@ export class QmlDomSceneGraph {
       if (object.parent?.typeName === 'ScrollView') {
         style.width = 'auto'
         style.margin = `${margin}px`
-      } else if (geometry.width <= 0) {
+      } else if (geometry.width <= 0 && !object.getProperty('anchors.fill')) {
         style.width = 'auto'
       }
-      if (Number(object.getProperty('height')) <= 0) {
+      if (Number(object.getProperty('height')) <= 0 && !object.getProperty('anchors.fill')) {
         style.height = 'auto'
         style.minHeight = 'max-content'
       }
     }
-    // Fix A：布局容器（flex）子项防收缩。
-    // CSS flex 默认 flex-shrink:1 会把声明尺寸的子项压扁，导致视觉尺寸与
-    // 锚点几何模型（基于声明尺寸）不一致——锚定 bottom/baseline 的子项会
-    // 渲染到容器视觉边界之外。非 fill 子项保持声明尺寸；fill 子项
-    // （anchors.fill / Layout.fillWidth / Layout.fillHeight）仍参与 flex 伸缩。
     if (positionedByParent && ['Row', 'Column', 'RowLayout', 'ColumnLayout', 'Flow'].includes(object.parent?.typeName ?? '')) {
-      const fill = Boolean(object.getProperty('anchors.fill')) ||
-        Boolean(object.hasProperty('Layout.fillWidth') && object.getProperty('Layout.fillWidth')) ||
-        Boolean(object.hasProperty('Layout.fillHeight') && object.getProperty('Layout.fillHeight'))
-      if (!fill) {
+      const parentIsRow = object.parent?.typeName === 'RowLayout'
+      const parentIsColumn = object.parent?.typeName === 'ColumnLayout'
+      const primaryFill = Boolean(object.getProperty('anchors.fill')) ||
+        (parentIsRow && Boolean(object.getProperty('Layout.fillWidth'))) ||
+        (parentIsColumn && Boolean(object.getProperty('Layout.fillHeight')))
+      if (primaryFill) {
+        const factorName = parentIsRow ? 'Layout.horizontalStretchFactor' : 'Layout.verticalStretchFactor'
+        const factor = parentIsRow || parentIsColumn ? Number(object.getProperty(factorName)) : -1
+        style.flexGrow = String(factor > 0 ? factor : 1)
+        style.flexShrink = '1'
+      } else {
         style.flexShrink = '0'
         style.flexGrow = '0'
       }
+      const crossFill = (parentIsRow && object.getProperty('Layout.fillHeight')) ||
+        (parentIsColumn && object.getProperty('Layout.fillWidth'))
+      if (crossFill) style.alignSelf = 'stretch'
     }
     if (contentContainerTypes.has(object.typeName) && Number(object.getProperty('height')) <= 0) {
       style.height = 'auto'
       style.minHeight = 'max-content'
       if (layoutTypes.has(object.parent?.typeName ?? '')) style.alignSelf = 'stretch'
     }
-    if (object.hasProperty('Layout.fillWidth') && object.getProperty('Layout.fillWidth')) {
-      style.flexGrow = '1'
-      if (object.parent?.typeName === 'ColumnLayout') style.width = '100%'
+    if (layoutTypes.has(object.parent?.typeName ?? '')) {
+      style.marginLeft = cssLength(layoutMarginValue(object, 'left'))
+      style.marginRight = cssLength(layoutMarginValue(object, 'right'))
+      style.marginTop = cssLength(layoutMarginValue(object, 'top'))
+      style.marginBottom = cssLength(layoutMarginValue(object, 'bottom'))
     }
-    if (object.hasProperty('Layout.fillHeight') && object.getProperty('Layout.fillHeight')) style.alignSelf = 'stretch'
     const alignment = object.getProperty('Layout.alignment')
     const aligned = (name: string, flag: number) => typeof alignment === 'number'
       ? (alignment & flag) !== 0
       : String(alignment).includes(name)
     if (object.parent?.typeName === 'RowLayout') {
-      if (aligned('AlignTop', 8)) style.alignSelf = 'flex-start'
-      else if (aligned('AlignBottom', 16)) style.alignSelf = 'flex-end'
-      else if (aligned('AlignVCenter', 32)) style.alignSelf = 'center'
+      if (aligned('AlignTop', 32)) style.alignSelf = 'flex-start'
+      else if (aligned('AlignBottom', 128)) style.alignSelf = 'flex-end'
+      else if (aligned('AlignVCenter', 64)) style.alignSelf = 'center'
     } else if (object.parent?.typeName === 'ColumnLayout') {
-      if (aligned('AlignLeft', 1)) style.alignSelf = 'flex-start'
-      else if (aligned('AlignRight', 2)) style.alignSelf = 'flex-end'
+      const rightToLeft = Number(object.parent.getProperty('layoutDirection')) === 1 || String(object.parent.getProperty('layoutDirection')).includes('RightToLeft')
+      if (aligned('AlignLeft', 1)) style.alignSelf = rightToLeft ? 'flex-end' : 'flex-start'
+      else if (aligned('AlignRight', 2)) style.alignSelf = rightToLeft ? 'flex-start' : 'flex-end'
       else if (aligned('AlignHCenter', 4)) style.alignSelf = 'center'
     }
     const tabFocus = object.hasProperty('focusPolicy') && focusPolicyAllows(object.getProperty('focusPolicy'), 'tab')
-    element.tabIndex = object.getProperty('focus') || tabFocus ? 0 : -1
+    element.tabIndex = object.getProperty('focus') || object.getProperty('activeFocusOnTab') || tabFocus ? 0 : -1
     if (object.getProperty('focus') && this.domDocument.activeElement !== element) element.focus()
 
     const objectName = cssValue(object.getProperty('objectName'))
@@ -531,8 +652,8 @@ export class QmlDomSceneGraph {
 
     if (object.typeName === 'ApplicationWindow') {
       style.display = object.getProperty('visible') ? 'grid' : 'none'
-      const hasMenuBar = object.getProperty('menuBar') instanceof QmlObject
-      style.gridTemplateRows = hasMenuBar ? 'auto auto minmax(0, 1fr) auto' : 'auto minmax(0, 1fr) auto'
+      const rows = applicationWindowGridRows(object)
+      style.gridTemplateRows = rows.template
       style.maxWidth = '100%'
       style.boxSizing = 'border-box'
       style.overflow = 'hidden'
@@ -555,25 +676,60 @@ export class QmlDomSceneGraph {
       const menuBar = object.parent.getProperty('menuBar')
       const header = object.parent.getProperty('header')
       const footer = object.parent.getProperty('footer')
-      const hasMenuBar = menuBar instanceof QmlObject
-      style.position = 'relative'
-      style.inset = 'auto'
-      style.width = '100%'
-      style.minWidth = '0'
-      style.boxSizing = 'border-box'
+      const rows = applicationWindowGridRows(object.parent)
+      const chromeWidth = Number(object.parent.getProperty('width')) || 0
+      const chromeHeight = effectiveItemHeight(object)
       if (object === menuBar) {
-        style.gridRow = '1'
+        if (chromeWidth > 0 && Number(object.getProperty('width')) !== chromeWidth) {
+          object.setInternalProperty('width', chromeWidth)
+        }
+        if (chromeHeight > 0 && Number(object.getProperty('height')) <= 0) {
+          object.setInternalProperty('height', chromeHeight)
+        }
+        style.position = 'relative'
+        style.inset = 'auto'
+        style.width = '100%'
+        style.minWidth = '0'
+        style.boxSizing = 'border-box'
+        // grid-column:1 防止 CSS Grid 自动列放置把多个同 row 子项排到第二列
+        style.gridColumn = '1'
+        style.gridRow = rows.menuBarRow > 0 ? String(rows.menuBarRow) : ''
         style.height = 'auto'
       } else if (object === header) {
-        style.gridRow = hasMenuBar ? '2' : '1'
+        if (chromeWidth > 0 && Number(object.getProperty('width')) !== chromeWidth) {
+          object.setInternalProperty('width', chromeWidth)
+        }
+        if (chromeHeight > 0 && Number(object.getProperty('height')) <= 0) {
+          object.setInternalProperty('height', chromeHeight)
+        }
+        style.position = 'relative'
+        style.inset = 'auto'
+        style.width = '100%'
+        style.minWidth = '0'
+        style.boxSizing = 'border-box'
+        style.gridColumn = '1'
+        style.gridRow = rows.headerRow > 0 ? String(rows.headerRow) : ''
         style.height = 'auto'
       } else if (object === footer) {
-        style.gridRow = hasMenuBar ? '4' : '3'
+        if (chromeWidth > 0 && Number(object.getProperty('width')) !== chromeWidth) {
+          object.setInternalProperty('width', chromeWidth)
+        }
+        if (chromeHeight > 0 && Number(object.getProperty('height')) <= 0) {
+          object.setInternalProperty('height', chromeHeight)
+        }
+        style.position = 'relative'
+        style.inset = 'auto'
+        style.width = '100%'
+        style.minWidth = '0'
+        style.boxSizing = 'border-box'
+        style.gridColumn = '1'
+        style.gridRow = rows.footerRow > 0 ? String(rows.footerRow) : ''
         style.height = 'auto'
       } else {
-        style.gridRow = hasMenuBar ? '3' : '2'
-        style.height = '100%'
-        style.minHeight = '0'
+        // 普通内容子项属于 ApplicationWindow 的 content 区。
+        // 这里显式绑定到 content 行，同时保留绝对定位与锚点几何。
+        style.gridRow = String(rows.contentRow)
+        style.gridColumn = '1'
       }
     }
 
@@ -599,7 +755,7 @@ export class QmlDomSceneGraph {
         return parentColor !== null && parentColor[3] > 0
       })()
       const isDefaultBlack = textColor === null || (textColor[3] === 255 && textColor[0] === 0 && textColor[1] === 0 && textColor[2] === 0)
-      style.color = isDefaultBlack && !hasCustomRectangleBackground
+      style.color = isDefaultBlack && !object.isExplicitlySet('color') && !hasCustomRectangleBackground
         ? 'var(--qml-control-text)'
         : textColor ? toCssColor(textColor) : ''
       style.fontSize = (() => {
@@ -610,7 +766,7 @@ export class QmlDomSceneGraph {
       style.fontFamily = cssValue(resolveInheritedFontProperty(object, 'font.family'))
       style.fontWeight = resolveInheritedFontProperty(object, 'font.bold') ? 'bold' : 'normal'
       style.fontStyle = resolveInheritedFontProperty(object, 'font.italic') ? 'italic' : 'normal'
-      style.whiteSpace = object.getProperty('wrapMode') === 'Text.NoWrap' ? 'nowrap' : 'pre-wrap'
+      style.whiteSpace = object.getProperty('wrapMode') === 'Text.NoWrap' ? 'pre' : 'pre-wrap'
       if (object.hasProperty('padding')) style.padding = cssLength(object.getProperty('padding'))
     }
 
@@ -774,9 +930,14 @@ export class QmlDomSceneGraph {
 
     if (object.typeName === 'RowLayout' || object.typeName === 'ColumnLayout') {
       style.display = object.getProperty('visible') ? 'flex' : 'none'
-      style.flexDirection = object.typeName === 'RowLayout' ? 'row' : 'column'
       style.gap = cssLength(object.getProperty('spacing'))
-      style.alignItems = object.typeName === 'RowLayout' ? 'center' : 'stretch'
+      const rightToLeft = object.hasProperty('layoutDirection') && (
+        Number(object.getProperty('layoutDirection')) === 1 || String(object.getProperty('layoutDirection')).includes('RightToLeft')
+      )
+      style.flexDirection = object.typeName === 'RowLayout'
+        ? (rightToLeft ? 'row-reverse' : 'row')
+        : 'column'
+      style.alignItems = object.typeName === 'RowLayout' ? 'center' : rightToLeft ? 'flex-end' : 'flex-start'
     }
     if (object.typeName === 'GridLayout') {
       style.display = object.getProperty('visible') ? 'grid' : 'none'
@@ -809,11 +970,11 @@ export class QmlDomSceneGraph {
       style.padding = padding > 0 ? cssLength(padding) : ''
     }
 
-    if (object.hasProperty('palette.button')) {
+    if (buttonTypes.has(object.typeName) || checkTypes.has(object.typeName)) {
       const buttonColor = cssValue(object.getProperty('palette.button'))
       const buttonTextColor = cssValue(object.getProperty('palette.buttonText'))
-      style.backgroundColor = buttonColor === '#f3f3f3' ? '' : buttonColor
-      style.color = buttonTextColor === '#202020' ? '' : buttonTextColor
+      style.backgroundColor = isPropertyAssignedInHierarchy(object, 'palette.button') ? buttonColor : ''
+      style.color = isPropertyAssignedInHierarchy(object, 'palette.buttonText') ? buttonTextColor : ''
       style.fontFamily = cssValue(resolveInheritedFontProperty(object, 'font.family'))
       const pixelSize = Number(resolveInheritedFontProperty(object, 'font.pixelSize')) || 0
       const pointSize = Number(resolveInheritedFontProperty(object, 'font.pointSize')) || 0
@@ -840,6 +1001,8 @@ export class QmlDomSceneGraph {
           content.className = 'qml-button-content'
           element.appendChild(content)
         }
+        content.style.position = 'relative'
+        content.style.zIndex = '1'
         content.textContent = text
       }
       element.setAttribute('aria-pressed', cssValue(object.getProperty('checked')))
@@ -883,6 +1046,10 @@ export class QmlDomSceneGraph {
         element.placeholder = cssValue(object.getProperty('placeholderText'))
         element.readOnly = Boolean(object.getProperty('readOnly'))
         element.disabled = !object.getProperty('enabled')
+        if (object.isPropertyAssigned('color')) {
+          const textColor = parseQmlColor(object.getProperty('color'))
+          if (textColor) style.color = toCssColor(textColor)
+        }
       } else if (object.typeName === 'SpinBox') {
         element.type = 'number'
         element.min = cssValue(object.getProperty('from'))
@@ -1071,9 +1238,23 @@ export class QmlDomSceneGraph {
       style.backgroundColor = 'var(--qml-panel-muted-bg)'
       style.borderTop = object.parent?.getProperty('footer') === object ? '1px solid var(--qml-control-border)' : ''
       style.borderBottom = object.parent?.getProperty('header') === object ? '1px solid var(--qml-control-border)' : ''
-      orderedVisualChildren(object).forEach((child, index) => {
+      const tabs = orderedVisualChildren(object)
+      let currentIndex = Number(object.getProperty('currentIndex'))
+      if (tabs.length === 0) {
+        if (currentIndex !== -1) object.setInternalProperty('currentIndex', -1)
+        currentIndex = -1
+      } else {
+        const clamped = Math.max(0, Math.min(tabs.length - 1, Number.isFinite(currentIndex) ? currentIndex : 0))
+        if (currentIndex !== clamped) object.setInternalProperty('currentIndex', clamped)
+        currentIndex = clamped
+      }
+      tabs.forEach((child, index) => {
         const childElement = this.mounted.get(child)?.element
-        if (childElement) childElement.setAttribute('aria-selected', String(index === Number(object.getProperty('currentIndex'))))
+        const selected = index === currentIndex
+        if (child.hasProperty('checked') && child.getProperty('checked') !== selected) {
+          child.setInternalProperty('checked', selected)
+        }
+        if (childElement) childElement.setAttribute('aria-selected', String(selected))
       })
     }
     if (element instanceof this.domDocument.defaultView!.HTMLProgressElement && object.typeName === 'ProgressBar') {
@@ -1375,13 +1556,9 @@ export class QmlDomSceneGraph {
         // ApplicationWindow 内容区是 CSS Grid 的 1fr 行：
         // 内容区宽 = 窗口宽，内容区高 = 窗口高 - menuBar - header - footer（显式高或隐式高）
         layoutWidth = Number(window.getProperty('width')) || layoutWidth
-        const strip = (key: string) => {
-          const item = window.getProperty(key)
-          if (!(item instanceof QmlObject)) return 0
-          return Number(item.getProperty('height')) || Number(item.getProperty('implicitHeight')) || 0
-        }
+        const strips = applicationWindowChromeHeights(window)
         layoutHeight = Math.max(0, (Number(window.getProperty('height')) || layoutHeight)
-          - strip('menuBar') - strip('header') - strip('footer'))
+          - strips.menuBar - strips.header - strips.footer)
         // StackLayout 是布局容器的子项时，与兄弟项共享容器空间（QML 布局行为）：
         // 沿主轴扣减兄弟尺寸——Column/ColumnLayout 扣高度，Row/RowLayout 扣宽度，
         // 使模型尺寸与 CSS flex 分配结果一致（用声明尺寸避免递归）。
@@ -1420,7 +1597,7 @@ export class QmlDomSceneGraph {
 
     const targetFor = (value: unknown): QmlObject | null => resolveAnchorTarget(value, parent, this.ids)
     // 锚定线的坐标在父坐标系中：锚定父项时其坐标为 (0,0)，
-    // 锚定兄弟时用兄弟相对父坐标系的实际 x/y。
+    // 锚定兄弟时使用兄弟对象在父坐标系中的属性几何。
     const targetOrigin = (target: QmlObject): { x: number; y: number } => (
       target === parent
         ? { x: 0, y: 0 }
@@ -1433,19 +1610,15 @@ export class QmlDomSceneGraph {
         // 因此锚定 parent（ApplicationWindow）时，parent 的有效尺寸是内容区。
         const winWidth = Number(parent.getProperty('width')) || 0
         const winHeight = Number(parent.getProperty('height')) || 0
-        const strip = (key: string) => {
-          const item = parent.getProperty(key)
-          if (!(item instanceof QmlObject)) return 0
-          return Number(item.getProperty('height')) || Number(item.getProperty('implicitHeight')) || 0
-        }
+        const strips = applicationWindowChromeHeights(parent)
         return {
           width: winWidth,
-          height: Math.max(0, winHeight - strip('menuBar') - strip('header') - strip('footer')),
+          height: Math.max(0, winHeight - strips.menuBar - strips.header - strips.footer),
         }
       }
       return {
-        width: Number(target.getProperty('width')) || 0,
-        height: Number(target.getProperty('height')) || 0,
+        width: Number(target.getProperty('width')) || Number(target.getProperty('implicitWidth')) || 0,
+        height: Number(target.getProperty('height')) || Number(target.getProperty('implicitHeight')) || 0,
       }
     }
     const margin = Number(object.getProperty('anchors.margins')) || 0
@@ -1456,8 +1629,8 @@ export class QmlDomSceneGraph {
     const horizontalCenterOffset = Number(object.getProperty('anchors.horizontalCenterOffset')) || 0
     const verticalCenterOffset = Number(object.getProperty('anchors.verticalCenterOffset')) || 0
     const baselineOffset = Number(object.getProperty('anchors.baselineOffset')) || 0
-    // Qt: alignWhenCentered=true（默认）时，item 超出锚定目标边界时贴边不溢出；
-    // false 时即使更大也严格居中。
+    // Qt: alignWhenCentered=true（默认）时 centered anchors 对齐到整像素；
+    // false 时允许亚像素中心位置。
     const alignWhenCentered = object.getProperty('anchors.alignWhenCentered') !== false
     const fillTarget = targetFor(object.getProperty('anchors.fill'))
     if (fillTarget) {
@@ -1477,18 +1650,18 @@ export class QmlDomSceneGraph {
       const origin = targetOrigin(centerTarget)
       const cx = origin.x + (target.width - width) / 2 + horizontalCenterOffset
       const cy = origin.y + (target.height - height) / 2 + verticalCenterOffset
-      x = alignWhenCentered ? Math.max(0, cx) : cx
-      y = alignWhenCentered ? Math.max(0, cy) : cy
+      x = alignWhenCentered ? Math.round(cx) : cx
+      y = alignWhenCentered ? Math.round(cy) : cy
     }
     const horizontalTarget = targetFor(object.getProperty('anchors.horizontalCenter'))
     if (horizontalTarget) {
       const hx = targetOrigin(horizontalTarget).x + (targetSize(horizontalTarget).width - width) / 2 + horizontalCenterOffset
-      x = alignWhenCentered ? Math.max(0, hx) : hx
+      x = alignWhenCentered ? Math.round(hx) : hx
     }
     const verticalTarget = targetFor(object.getProperty('anchors.verticalCenter'))
     if (verticalTarget) {
       const vy = targetOrigin(verticalTarget).y + (targetSize(verticalTarget).height - height) / 2 + verticalCenterOffset
-      y = alignWhenCentered ? Math.max(0, vy) : vy
+      y = alignWhenCentered ? Math.round(vy) : vy
     }
 
     const leftTarget = targetFor(object.getProperty('anchors.left'))
@@ -1564,10 +1737,40 @@ export class QmlDomSceneGraph {
       buttons: event.buttons,
     })
 
-    listen('focus', () => object.setInternalProperty('activeFocus', true))
+    listen('focus', () => object.callMethod('forceActiveFocus'))
     listen('blur', () => object.setInternalProperty('activeFocus', false))
-    listen('keydown', event => object.emitSignal('keyPressed', event))
-    listen('keyup', event => object.emitSignal('keyReleased', event))
+    const emitKey = (name: 'pressed' | 'released', event: KeyboardEvent) => {
+      const attachedSignal = `Keys.${name}`
+      const itemSignal = name === 'pressed' ? 'keyPressed' : 'keyReleased'
+      const emitAttached = () => {
+        if (!object.getProperty('Keys.enabled')) return
+        object.emitSignal(attachedSignal, event)
+        const forwardTo = object.getProperty('Keys.forwardTo')
+        if (Array.isArray(forwardTo)) {
+          forwardTo.filter((target): target is QmlObject => target instanceof QmlObject)
+            .forEach(target => target.emitSignal(attachedSignal, event))
+        }
+      }
+      if (String(object.getProperty('Keys.priority')).includes('AfterItem')) {
+        object.emitSignal(itemSignal, event)
+        emitAttached()
+      } else {
+        emitAttached()
+        object.emitSignal(itemSignal, event)
+      }
+    }
+    listen('keydown', event => {
+      const navigationProperty: Record<string, string> = {
+        ArrowLeft: 'KeyNavigation.left', ArrowRight: 'KeyNavigation.right',
+        ArrowUp: 'KeyNavigation.up', ArrowDown: 'KeyNavigation.down',
+        Tab: event.shiftKey ? 'KeyNavigation.backtab' : 'KeyNavigation.tab',
+      }
+      const propertyName = navigationProperty[event.key]
+      const target = propertyName ? object.getProperty(propertyName) : null
+      if (target instanceof QmlObject && target.hasMethod('forceActiveFocus')) target.callMethod('forceActiveFocus')
+      emitKey('pressed', event)
+    })
+    listen('keyup', event => emitKey('released', event))
 
     if (object.hasProperty('hovered')) {
       listen('mouseenter', () => object.setInternalProperty('hovered', true))
@@ -1693,7 +1896,10 @@ export class QmlDomSceneGraph {
                 object.setProperty('checkState', nextState)
                 object.setProperty('checked', nextState !== 0)
               } else {
-                object.setProperty('checked', !object.getProperty('checked'))
+                const next = !object.getProperty('checked')
+                object.setProperty('checked', next)
+                // 非 tristate 时 checked 与 checkState 保持同步
+                object.setProperty('checkState', next ? 2 : 0)
               }
             } else if (object.typeName === 'RadioButton') {
               if (!object.getProperty('checked')) {
@@ -1728,7 +1934,11 @@ export class QmlDomSceneGraph {
 
         // --- 子类型特有后处理 ---
         if (object.typeName === 'TabButton' && object.parent?.typeName === 'TabBar') {
-          object.parent.setProperty('currentIndex', orderedVisualChildren(object.parent).indexOf(object))
+          const index = orderedVisualChildren(object.parent).indexOf(object)
+          object.parent.setProperty('currentIndex', index)
+          if (object.parent.hasSignal('activated')) {
+            object.parent.emitSignal('activated', index)
+          }
         }
         if (object.typeName === 'ItemDelegate' && object.hasProperty('index') && ['ListView', 'GridView', 'PathView'].includes(object.parent?.typeName ?? '')) {
           const index = Number(object.getProperty('index'))

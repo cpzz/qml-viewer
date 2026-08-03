@@ -604,7 +604,7 @@ function parseElement(s: string, pos: number, lineStarts: number[]): [QMLNode, n
             else if (s[pos] === '}') innerDepth--
             pos++
           }
-          if (/^on[A-Z]/.test(key) || key === 'Component.onCompleted') {
+          if (/^(?:[A-Za-z_]\w*\.)?on[A-Z]/.test(key) || key === 'Component.onCompleted') {
             node.properties[key] = s.slice(blockStart, pos)
             node.propertyRanges = node.propertyRanges || {}
             node.propertyRanges[key] = createRange(lineStarts, propertyStart, pos)

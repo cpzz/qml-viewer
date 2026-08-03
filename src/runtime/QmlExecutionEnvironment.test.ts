@@ -74,6 +74,42 @@ describe('QmlExecutionEnvironment', () => {
     expect(text.getProperty('color')).toBe('blue')
   })
 
+  it('reads grouped properties in string expressions and updates bindings reactively', () => {
+    const { root, environment } = createEnvironment()
+    const text = new QmlObject('Text', root)
+    root.defineProperty({ name: 'childrenRect.x', type: 'real', initialValue: -24 })
+    root.defineProperty({ name: 'childrenRect.y', type: 'real', initialValue: 16 })
+    root.defineProperty({ name: 'childrenRect.width', type: 'real', initialValue: 590 })
+    root.defineProperty({ name: 'childrenRect.height', type: 'real', initialValue: 284 })
+    text.defineProperty({ name: 'text', type: 'string', initialValue: '' })
+    const bindings = new BindingEngine()
+    const expression = '"childrenRect: " + root.childrenRect.x + ", " + root.childrenRect.y + " / " + root.childrenRect.width + " x " + root.childrenRect.height'
+
+    bindings.bind(text, 'text', () => environment.evaluate(expression, text))
+    expect(text.getProperty('text')).toBe('childrenRect: -24, 16 / 590 x 284')
+
+    root.setProperty('childrenRect.width', 620)
+    expect(text.getProperty('text')).toBe('childrenRect: -24, 16 / 620 x 284')
+  })
+
+  it('reads and writes grouped properties on the current context', () => {
+    const { field, environment } = createEnvironment()
+    field.defineProperty({ name: 'font.pixelSize', type: 'real', initialValue: 14 })
+
+    expect(environment.evaluate('font.pixelSize + 2', field)).toBe(16)
+    environment.execute('font.pixelSize = 20', field)
+    expect(field.getProperty('font.pixelSize')).toBe(20)
+  })
+
+  it('prefers grouped properties over a same-named placeholder property', () => {
+    const { root, environment } = createEnvironment()
+    root.defineProperty({ name: 'palette', type: 'var', initialValue: null })
+    root.defineProperty({ name: 'palette.highlight', type: 'color', initialValue: '#0f766e' })
+
+    expect(environment.evaluate('root.palette.highlight', root)).toBe('#0f766e')
+    expect(environment.evaluate('palette.highlight', root)).toBe('#0f766e')
+  })
+
   it('calls QML methods and signals against live object state', () => {
     const { root, environment } = createEnvironment()
     const activations: unknown[][] = []

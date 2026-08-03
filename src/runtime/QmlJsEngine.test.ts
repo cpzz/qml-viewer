@@ -97,9 +97,15 @@ describe('QmlJsEngine', () => {
     expect(engine.evaluateLive('Qt.Unchecked', bridge)).toBe(0)
     expect(engine.evaluateLive('Qt.PartiallyChecked', bridge)).toBe(1)
     expect(engine.evaluateLive('Qt.Checked', bridge)).toBe(2)
+    expect(engine.evaluateLive('[Qt.LeftToRight, Qt.RightToLeft, Qt.LayoutDirectionAuto]', bridge))
+      .toEqual([0, 1, 2])
     // Easing 枚举（QEasingCurve::Type 值）
     expect(engine.evaluateLive('[Easing.Linear, Easing.OutQuad, Easing.OutBack, Easing.OutBounce]', bridge))
       .toEqual([0, 2, 34, 38])
+    expect(engine.evaluateLive('[Item.TopLeft, Item.Center, Item.BottomRight]', bridge))
+      .toEqual([0, 4, 8])
+    expect(engine.evaluateLive('[Keys.BeforeItem, KeyNavigation.AfterItem, Drag.Automatic]', bridge))
+      .toEqual([0, 1, 1])
     // Qt 颜色函数（QML color 值类型）：返回 Qt 语义字符串 #RRGGBB / #AARRGGBB
     expect(engine.evaluateLive('Qt.rgba(1, 0, 0, 0.5)', bridge)).toBe('#80ff0000')
     expect(engine.evaluateLive('Qt.rgb(1, 0, 0)', bridge)).toBe('#ff0000')

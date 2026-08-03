@@ -43,8 +43,57 @@ const commonProperties: QmlPropertyDefinition[] = [
   property('id', 'expression'),
   property('x', 'number'), property('y', 'number'),
   property('width', 'number'), property('height', 'number'),
+  property('implicitWidth', 'number'), property('implicitHeight', 'number'),
+  property('parent', 'expression'),
+  property('children', 'list', undefined, undefined, true),
+  property('visibleChildren', 'list', undefined, undefined, true),
+  property('resources', 'list', undefined, undefined, true),
+  property('childrenRect.x', 'number', undefined, undefined, true),
+  property('childrenRect.y', 'number', undefined, undefined, true),
+  property('childrenRect.width', 'number', undefined, undefined, true),
+  property('childrenRect.height', 'number', undefined, undefined, true),
   property('visible', 'boolean'), property('enabled', 'boolean'),
   property('opacity', 'number'), property('z', 'number'), property('clip', 'boolean'),
+  property('smooth', 'boolean'), property('antialiasing', 'boolean'),
+  property('baselineOffset', 'number'),
+  property('activeFocus', 'boolean', undefined, undefined, true),
+  property('activeFocusOnTab', 'boolean'),
+  property('focusPolicy', 'enum', ['Qt.NoFocus', 'Qt.TabFocus', 'Qt.ClickFocus', 'Qt.StrongFocus', 'Qt.WheelFocus']),
+  property('transformOrigin', 'enum', [
+    'Item.TopLeft', 'Item.Top', 'Item.TopRight', 'Item.Left', 'Item.Center',
+    'Item.Right', 'Item.BottomLeft', 'Item.Bottom', 'Item.BottomRight',
+  ]),
+  property('transform', 'list', undefined, undefined, true),
+  property('containmentMask', 'expression'), property('palette', 'expression'),
+  ...[
+    'accent', 'alternateBase', 'base', 'brightText', 'button', 'buttonText', 'dark',
+    'highlight', 'highlightedText', 'light', 'link', 'linkVisited', 'mid', 'midlight',
+    'placeholderText', 'shadow', 'text', 'toolTipBase', 'toolTipText', 'window', 'windowText',
+  ].map(name => property(`palette.${name}`, 'color')),
+  property('layer.effect', 'component'), property('layer.enabled', 'boolean'),
+  property('layer.format', 'enum'), property('layer.live', 'boolean'),
+  property('layer.mipmap', 'boolean'), property('layer.samplerName', 'string'),
+  property('layer.samples', 'number'), property('layer.smooth', 'boolean'),
+  property('layer.sourceRect', 'expression'), property('layer.textureMirroring', 'enum'),
+  property('layer.textureSize', 'expression'), property('layer.wrapMode', 'enum'),
+  property('forceActiveFocus', 'method'), property('nextItemInFocusChain', 'method'),
+  property('grabToImage', 'method'),
+  property('dumpItemTree', 'method'), property('ensurePolished', 'method'), property('polish', 'method'),
+  property('stackAfter', 'method'), property('stackBefore', 'method'),
+  property('childAt', 'method'), property('contains', 'method'),
+  property('mapFromGlobal', 'method'), property('mapFromItem', 'method'),
+  property('mapToGlobal', 'method'), property('mapToItem', 'method'),
+  property('KeyNavigation.tab', 'expression'), property('KeyNavigation.backtab', 'expression'),
+  property('KeyNavigation.priority', 'enum', ['KeyNavigation.BeforeItem', 'KeyNavigation.AfterItem']),
+  property('Keys.enabled', 'boolean'), property('Keys.forwardTo', 'list'),
+  property('Keys.priority', 'enum', ['Keys.BeforeItem', 'Keys.AfterItem']),
+  property('Drag.active', 'boolean'), property('Drag.source', 'expression'),
+  property('Drag.target', 'expression', undefined, undefined, true),
+  property('Drag.hotSpot.x', 'number'), property('Drag.hotSpot.y', 'number'),
+  property('Drag.imageSource', 'url'), property('Drag.imageSourceSize.width', 'number'),
+  property('Drag.imageSourceSize.height', 'number'), property('Drag.keys', 'list'),
+  property('Drag.mimeData', 'expression'), property('Drag.proposedAction', 'enum', undefined, undefined, true),
+  property('Drag.supportedActions', 'enum'), property('Drag.dragType', 'enum'),
   property('anchors.fill', 'expression'), property('anchors.centerIn', 'expression'),
   property('anchors.left', 'expression'), property('anchors.right', 'expression'),
   property('anchors.top', 'expression'), property('anchors.bottom', 'expression'),
@@ -59,6 +108,10 @@ const commonProperties: QmlPropertyDefinition[] = [
   property('Layout.preferredWidth', 'number'), property('Layout.preferredHeight', 'number'),
   property('Layout.minimumWidth', 'number'), property('Layout.minimumHeight', 'number'),
   property('Layout.maximumWidth', 'number'), property('Layout.maximumHeight', 'number'),
+  property('Layout.margins', 'number'), property('Layout.leftMargin', 'number'),
+  property('Layout.rightMargin', 'number'), property('Layout.topMargin', 'number'),
+  property('Layout.bottomMargin', 'number'),
+  property('Layout.horizontalStretchFactor', 'number'), property('Layout.verticalStretchFactor', 'number'),
   property('Layout.alignment', 'enum', [
     'Qt.AlignLeft', 'Qt.AlignRight', 'Qt.AlignHCenter', 'Qt.AlignTop',
     'Qt.AlignBottom', 'Qt.AlignVCenter', 'Qt.AlignCenter',
@@ -105,6 +158,9 @@ const selectionModeValues = [
 
 // Inheritance map: child type → parent type
 const typeExtends: Record<string, string> = {
+  Translate: 'Transform',
+  Scale: 'Transform',
+  Rotation: 'Transform',
   ApplicationWindow: 'Window',
   Label: 'Text',
   RoundButton: 'Button',
@@ -135,6 +191,16 @@ const typeExtends: Record<string, string> = {
 }
 
 const typeProperties: Record<string, QmlPropertyDefinition[]> = {
+  Transform: [],
+  Translate: [property('x', 'number'), property('y', 'number')],
+  Scale: [
+    property('origin.x', 'number'), property('origin.y', 'number'),
+    property('xScale', 'number'), property('yScale', 'number'),
+  ],
+  Rotation: [
+    property('angle', 'number'), property('origin.x', 'number'), property('origin.y', 'number'),
+    property('axis.x', 'number'), property('axis.y', 'number'), property('axis.z', 'number'),
+  ],
   // ── Window (Qt 6) ──
   Window: [
     property('title', 'string'),
@@ -187,7 +253,11 @@ const typeProperties: Record<string, QmlPropertyDefinition[]> = {
   Column: [property('spacing', 'number'), property('padding', 'number')],
   Flow: [property('spacing', 'number'), property('flow', 'enum', ['Flow.LeftToRight', 'Flow.TopToBottom'])],
   RowLayout: [property('spacing', 'number')],
-  ColumnLayout: [property('spacing', 'number')],
+  ColumnLayout: [
+    property('spacing', 'number'),
+    property('layoutDirection', 'enum', ['Qt.LeftToRight', 'Qt.RightToLeft']),
+    property('uniformCellSizes', 'boolean'),
+  ],
   GridLayout: [property('columns', 'number'), property('rows', 'number'), property('rowSpacing', 'number'), property('columnSpacing', 'number')],
   // ── Control (Qt 6 base) ──
   Control: [
@@ -350,7 +420,7 @@ const methodsByType: Record<string, string[]> = {
 }
 
 export const qmlTypes: QmlTypeDefinition[] = supportedTypes.map(name => {
-  const nonVisualTypes = new Set(['ListModel', 'ListElement', 'Connections', 'Component', 'Action', 'ActionGroup', 'Shortcut', 'Timer', 'Path', 'PathLine', 'PathQuad', 'PathCubic', 'LineSeries', 'SplineSeries', 'BarSeries', 'BarSet', 'PieSeries', 'PieSlice', 'XYPoint', 'NumberAnimation', 'ColorAnimation', 'PropertyAnimation'])
+  const nonVisualTypes = new Set(['ListModel', 'ListElement', 'Connections', 'Component', 'Transform', 'Translate', 'Scale', 'Rotation', 'Action', 'ActionGroup', 'Shortcut', 'Timer', 'Path', 'PathLine', 'PathQuad', 'PathCubic', 'LineSeries', 'SplineSeries', 'BarSeries', 'BarSet', 'PieSeries', 'PieSlice', 'XYPoint', 'NumberAnimation', 'ColorAnimation', 'PropertyAnimation'])
   const windowTypes = new Set(['ApplicationWindow', 'Window'])
 
   // Walk the inheritance chain to collect ancestor properties (parent first, child last)

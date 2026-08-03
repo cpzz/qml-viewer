@@ -120,6 +120,16 @@ describe('parseQML compatibility baseline', () => {
     expect(button.properties.onClicked).toContain('console.log("clicked")')
   })
 
+  it('retains qualified attached signal handlers', () => {
+    const [item] = parseQML(`
+      Item {
+        Keys.onPressed: { accepted = true }
+      }
+    `)
+
+    expect(item.properties['Keys.onPressed']).toContain('accepted = true')
+  })
+
   it('preserves property types, modifiers, and optional initializers', () => {
     const [item] = parseQML(`
       Item {

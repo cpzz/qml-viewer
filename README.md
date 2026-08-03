@@ -190,6 +190,262 @@ qml-viewer/
 3. `runtime/QmlJsEngine.ts` 在隔离的 QuickJS WASM 中执行 JavaScript
 4. `runtime/QmlDomSceneGraph.ts` 把 retained 对象树投影到 DOM、Canvas 和 WebGL
 
+## QML 类型继承关系
+
+```plantuml
+@startuml QML Type Hierarchy
+hide members
+skinparam classBackgroundColor #FFFDE7
+skinparam classBorderColor #78909C
+skinparam arrowColor #546E7A
+
+package "核心基础 QtObject" {
+  class QtObject
+  class Connections
+  class Timer
+  class Component
+  class ListModel
+  class ListElement
+  class Action
+  class ActionGroup
+  class Shortcut
+  class Path
+}
+
+package "Transform / Animation" {
+  class Transform
+  class Translate
+  class Scale
+  class Rotation
+  class NumberAnimation
+  class PropertyAnimation
+  class ColorAnimation
+  class Vector3dAnimation
+  class PauseAnimation
+  class ScriptAction
+  class SequentialAnimation
+  class ParallelAnimation
+  class State
+  class PropertyChanges
+  class Transition
+  class Behavior
+}
+
+package "Item 基础可视元素" {
+  class Item
+  class FocusScope
+  class Rectangle
+  class Text
+  class Label
+  class Image
+  class Canvas
+  class ShaderEffect
+  class ParticleSystem
+  class ChartView
+  class DropShadow
+  class OpacityMask
+  class MouseArea
+  class Loader
+  class Repeater
+  class WebEngineView
+  class VideoOutput
+}
+
+package "布局 & 定位" {
+  class Row
+  class Column
+  class Grid
+  class Flow
+  class RowLayout
+  class ColumnLayout
+  class GridLayout
+  class StackLayout
+}
+
+package "视图 & 滚动" {
+  class Flickable
+  class ScrollView
+  class ListView
+  class GridView
+  class PathView
+  class TableView
+  class TreeView
+  class HorizontalHeaderView
+  class VerticalHeaderView
+}
+
+package "Window" {
+  class Window
+  class ApplicationWindow
+}
+
+package "Control 体系" {
+  class Control
+  class Button
+  class RoundButton
+  class ToolButton
+  class TabButton
+  class ItemDelegate
+  class DelayButton
+  class MenuItem
+  class CheckBox
+  class RadioButton
+  class Switch
+  class TabBar
+  class TextField
+  class TextInput
+  class TextArea
+  class TextEdit
+  class Slider
+  class Dial
+  class RangeSlider
+  class SpinBox
+  class Tumbler
+  class ComboBox
+  class ProgressBar
+  class BusyIndicator
+  class Pane
+  class Frame
+  class GroupBox
+  class Page
+  class SwipeView
+  class StackView
+  class SplitView
+  class MenuBar
+  class ToolBar
+  class Popup
+  class Dialog
+  class Menu
+  class Drawer
+  class ToolTip
+  class Calendar
+  class DatePicker
+  class TimePicker
+  class ScrollIndicator
+  class ScrollBar
+  class MenuSeparator
+}
+
+' QtObject 层
+QtObject <|-- Connections
+QtObject <|-- Timer
+QtObject <|-- Component
+QtObject <|-- ListModel
+QtObject <|-- ListElement
+QtObject <|-- Action
+QtObject <|-- ActionGroup
+QtObject <|-- Shortcut
+QtObject <|-- Path
+QtObject <|-- Transform
+Transform <|-- Translate
+Transform <|-- Scale
+Transform <|-- Rotation
+QtObject <|-- NumberAnimation
+NumberAnimation <|-- PropertyAnimation
+NumberAnimation <|-- ColorAnimation
+NumberAnimation <|-- Vector3dAnimation
+QtObject <|-- PauseAnimation
+QtObject <|-- ScriptAction
+QtObject <|-- SequentialAnimation
+SequentialAnimation <|-- ParallelAnimation
+QtObject <|-- State
+QtObject <|-- PropertyChanges
+QtObject <|-- Transition
+QtObject <|-- Behavior
+
+' Item 层
+QtObject <|-- Item
+Item <|-- FocusScope
+Item <|-- Rectangle
+Item <|-- Text
+Text <|-- Label
+Item <|-- Image
+Item <|-- Canvas
+Canvas <|-- ShaderEffect
+Canvas <|-- ParticleSystem
+Canvas <|-- ChartView
+Item <|-- DropShadow
+Item <|-- OpacityMask
+Item <|-- MouseArea
+Item <|-- Loader
+Item <|-- Repeater
+Item <|-- WebEngineView
+Item <|-- VideoOutput
+
+' 布局
+Item <|-- Row
+Item <|-- Column
+Item <|-- Grid
+Item <|-- Flow
+Item <|-- RowLayout
+Item <|-- ColumnLayout
+Item <|-- GridLayout
+Item <|-- StackLayout
+
+' 视图
+Item <|-- Flickable
+Flickable <|-- ScrollView
+Flickable <|-- ListView
+Flickable <|-- GridView
+Flickable <|-- PathView
+Flickable <|-- TableView
+Flickable <|-- TreeView
+Item <|-- HorizontalHeaderView
+Item <|-- VerticalHeaderView
+
+' Window
+Item <|-- Window
+Window <|-- ApplicationWindow
+
+' Control 层
+Item <|-- Control
+Control <|-- Button
+Button <|-- RoundButton
+Button <|-- ToolButton
+Button <|-- TabButton
+Button <|-- ItemDelegate
+Button <|-- DelayButton
+Button <|-- MenuItem
+Button <|-- CheckBox
+CheckBox <|-- RadioButton
+CheckBox <|-- Switch
+Control <|-- TabBar
+Control <|-- TextField
+TextField <|-- TextInput
+TextField <|-- TextArea
+TextArea <|-- TextEdit
+Control <|-- Slider
+Slider <|-- Dial
+Control <|-- RangeSlider
+Control <|-- SpinBox
+Control <|-- Tumbler
+Control <|-- ComboBox
+Control <|-- ProgressBar
+Control <|-- BusyIndicator
+Control <|-- Pane
+Pane <|-- Frame
+Frame <|-- GroupBox
+Pane <|-- Page
+Control <|-- SwipeView
+Control <|-- StackView
+Control <|-- SplitView
+Control <|-- MenuBar
+Control <|-- ToolBar
+Control <|-- Popup
+Popup <|-- Dialog
+Popup <|-- Menu
+Popup <|-- Drawer
+Popup <|-- ToolTip
+Control <|-- Calendar
+Control <|-- DatePicker
+Control <|-- TimePicker
+Control <|-- ScrollIndicator
+Control <|-- ScrollBar
+Control <|-- MenuSeparator
+
+@enduml
+```
+
 ## 许可证
 
 ISC
