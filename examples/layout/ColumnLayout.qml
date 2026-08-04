@@ -17,6 +17,8 @@ import QtQuick.Layouts
 ColumnLayout {
     spacing: 12
 
+    // 期望：minimumBox 实际宽度 100（小于 preferredWidth 40 时以 minimum 为准）
+    //       maximumBox 实际宽度 120（大于 maximumWidth 120 时截断到 maximum）
     Text { text: "Size constraints"; color: "#e8e8e8"; font.pixelSize: 16 }
     RowLayout {
         Layout.preferredWidth: 560
@@ -43,6 +45,7 @@ ColumnLayout {
         }
     }
 
+    // 期望：fillBox 占据剩余所有宽度（fillWidth）并拉伸到行最大高度（fillHeight）
     Text { text: "Fill width and height"; color: "#e8e8e8"; font.pixelSize: 16 }
     RowLayout {
         Layout.preferredWidth: 560
@@ -68,6 +71,7 @@ ColumnLayout {
         }
     }
 
+    // 期望：三色块按 top / center / bottom 垂直对齐；左中右水平对齐各占一行
     Text { text: "Alignment"; color: "#e8e8e8"; font.pixelSize: 16 }
     RowLayout {
         Layout.preferredWidth: 560

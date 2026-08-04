@@ -205,6 +205,18 @@ function isPropertyAssignedInHierarchy(object: QmlObject, name: string): boolean
   return false
 }
 
+/** Resolves a palette role, preferring the disabled group when enabled=false. Returns null if not explicitly set anywhere. */
+function resolveGroupedPaletteColor(object: QmlObject, role: string): string | null {
+  const isDisabled = object.hasProperty('enabled') && !object.getProperty('enabled')
+  if (isDisabled && isPropertyAssignedInHierarchy(object, `palette.disabled.${role}`)) {
+    return cssValue(object.getProperty(`palette.disabled.${role}`))
+  }
+  if (isPropertyAssignedInHierarchy(object, `palette.${role}`)) {
+    return cssValue(object.getProperty(`palette.${role}`))
+  }
+  return null
+}
+
 function orderedVisualChildren(object: QmlObject): QmlObject[] {
   const background = object.hasProperty('background') ? object.getProperty('background') : null
   const contentItem = object.hasProperty('contentItem') ? object.getProperty('contentItem') : null
@@ -316,6 +328,8 @@ export class QmlDomSceneGraph {
   private container: HTMLElement | null = null
   private overlay: HTMLElement | null = null
   private overlayRemoveEvents: Array<() => void> = []
+  private readonly tooltipElements = new Map<QmlObject, HTMLElement>()
+  private readonly tooltipTimers = new Map<QmlObject, ReturnType<typeof setTimeout>>()
   /** 当前文档的 id → 对象映射，用于解析锚线引用（someId.left） */
   private ids: ReadonlyMap<string, QmlObject> | null = null
 
@@ -410,6 +424,10 @@ export class QmlDomSceneGraph {
       node.anchorUnsubscribe.forEach(unsubscribe => unsubscribe())
     }
     this.mounted.clear()
+    this.tooltipElements.forEach(el => el.remove())
+    this.tooltipElements.clear()
+    this.tooltipTimers.forEach(id => clearTimeout(id))
+    this.tooltipTimers.clear()
     this.overlayRemoveEvents.forEach(removeEvent => removeEvent())
     this.overlayRemoveEvents = []
     this.overlay = null
@@ -658,7 +676,9 @@ export class QmlDomSceneGraph {
       style.boxSizing = 'border-box'
       style.overflow = 'hidden'
       const windowColor = parseQmlColor(object.getProperty('color'))
-      style.backgroundColor = !windowColor || windowColor[3] === 0 ? 'var(--qml-panel-bg)' : toCssColor(windowColor)
+      style.backgroundColor = !windowColor || windowColor[3] === 0
+        ? (resolveGroupedPaletteColor(object, 'window') ?? 'var(--qml-panel-bg)')
+        : toCssColor(windowColor)
     }
 
     if (object.typeName === 'Loader') {
@@ -755,8 +775,9 @@ export class QmlDomSceneGraph {
         return parentColor !== null && parentColor[3] > 0
       })()
       const isDefaultBlack = textColor === null || (textColor[3] === 255 && textColor[0] === 0 && textColor[1] === 0 && textColor[2] === 0)
-      style.color = isDefaultBlack && !object.isExplicitlySet('color') && !hasCustomRectangleBackground
-        ? 'var(--qml-control-text)'
+      const useDefaultColor = isDefaultBlack && !object.isExplicitlySet('color') && !hasCustomRectangleBackground
+      style.color = useDefaultColor
+        ? (resolveGroupedPaletteColor(object, 'windowText') ?? 'var(--qml-control-text)')
         : textColor ? toCssColor(textColor) : ''
       style.fontSize = (() => {
         const pixelSize = Number(resolveInheritedFontProperty(object, 'font.pixelSize')) || 0
@@ -786,7 +807,8 @@ export class QmlDomSceneGraph {
       caption.className = 'qml-check-caption'
 
       const checked = Boolean(object.getProperty('checked'))
-      const checkState = Number(object.getProperty('checkState'))
+      // checkState / tristate are CheckBox-specific; RadioButton and Switch only use checked
+      const checkState = object.hasProperty('checkState') ? Number(object.getProperty('checkState')) : (checked ? 2 : 0)
       const isPartial = checkState === 1
       const isRadio = object.typeName === 'RadioButton'
       const isSwitch = object.typeName === 'Switch'
@@ -971,10 +993,10 @@ export class QmlDomSceneGraph {
     }
 
     if (buttonTypes.has(object.typeName) || checkTypes.has(object.typeName)) {
-      const buttonColor = cssValue(object.getProperty('palette.button'))
-      const buttonTextColor = cssValue(object.getProperty('palette.buttonText'))
-      style.backgroundColor = isPropertyAssignedInHierarchy(object, 'palette.button') ? buttonColor : ''
-      style.color = isPropertyAssignedInHierarchy(object, 'palette.buttonText') ? buttonTextColor : ''
+      const isHighlighted = object.hasProperty('highlighted') && Boolean(object.getProperty('highlighted'))
+      const resolvedAccent = isHighlighted ? resolveGroupedPaletteColor(object, 'accent') : null
+      style.backgroundColor = resolvedAccent ?? resolveGroupedPaletteColor(object, 'button') ?? ''
+      style.color = resolveGroupedPaletteColor(object, 'buttonText') ?? ''
       style.fontFamily = cssValue(resolveInheritedFontProperty(object, 'font.family'))
       const pixelSize = Number(resolveInheritedFontProperty(object, 'font.pixelSize')) || 0
       const pointSize = Number(resolveInheritedFontProperty(object, 'font.pointSize')) || 0
@@ -1049,7 +1071,14 @@ export class QmlDomSceneGraph {
         if (object.isPropertyAssigned('color')) {
           const textColor = parseQmlColor(object.getProperty('color'))
           if (textColor) style.color = toCssColor(textColor)
+        } else {
+          const resolved = resolveGroupedPaletteColor(object, 'text')
+          if (resolved !== null) style.color = resolved
         }
+        const baseColor = resolveGroupedPaletteColor(object, 'base')
+        if (baseColor !== null) style.backgroundColor = baseColor
+        const placeholderColor = resolveGroupedPaletteColor(object, 'placeholderText')
+        if (placeholderColor !== null) style.setProperty('--qml-placeholder-color', placeholderColor)
       } else if (object.typeName === 'SpinBox') {
         element.type = 'number'
         element.min = cssValue(object.getProperty('from'))
@@ -1105,6 +1134,17 @@ export class QmlDomSceneGraph {
       element.placeholder = cssValue(object.getProperty('placeholderText'))
       element.readOnly = Boolean(object.getProperty('readOnly'))
       element.wrap = object.getProperty('wrapMode') === 'TextEdit.NoWrap' ? 'off' : 'soft'
+      if (object.isPropertyAssigned('color')) {
+        const textColor = parseQmlColor(object.getProperty('color'))
+        if (textColor) style.color = toCssColor(textColor)
+      } else {
+        const resolved = resolveGroupedPaletteColor(object, 'text')
+        if (resolved !== null) style.color = resolved
+      }
+      const baseColor = resolveGroupedPaletteColor(object, 'base')
+      if (baseColor !== null) style.backgroundColor = baseColor
+      const placeholderColor = resolveGroupedPaletteColor(object, 'placeholderText')
+      if (placeholderColor !== null) style.setProperty('--qml-placeholder-color', placeholderColor)
     }
     if (object.typeName === 'RangeSlider') {
       const from = Number(object.getProperty('from')) || 0
@@ -1464,8 +1504,60 @@ export class QmlDomSceneGraph {
 
   private updateBranch(object: QmlObject): void {
     const node = this.mounted.get(object)
-    if (node) this.updateElement(object, node.element)
+    if (node) {
+      this.updateElement(object, node.element)
+      this.syncTooltip(object, node.element)
+    }
     object.children.forEach(child => this.updateBranch(child))
+  }
+
+  private syncTooltip(object: QmlObject, element: HTMLElement): void {
+    if (!object.hasProperty('ToolTip.text')) return
+    const text = String(object.getProperty('ToolTip.text') ?? '')
+    const visible = Boolean(object.getProperty('ToolTip.visible'))
+    const delay = Number(object.getProperty('ToolTip.delay')) || 0
+    const timeout = Number(object.getProperty('ToolTip.timeout') ?? -1)
+
+    const existingTimer = this.tooltipTimers.get(object)
+    if (existingTimer !== undefined) {
+      clearTimeout(existingTimer)
+      this.tooltipTimers.delete(object)
+    }
+
+    if (!visible || !text) {
+      const el = this.tooltipElements.get(object)
+      if (el) el.style.display = 'none'
+      return
+    }
+
+    const show = () => {
+      let el = this.tooltipElements.get(object)
+      if (!el) {
+        el = this.domDocument.createElement('div')
+        el.className = 'qml-tooltip'
+        ;(this.container ?? this.domDocument.body).append(el)
+        this.tooltipElements.set(object, el)
+      }
+      el.textContent = text
+      el.style.display = 'block'
+      // position just below the element using its bounding rect relative to container
+      const containerRect = this.container?.getBoundingClientRect() ?? { left: 0, top: 0 }
+      const rect = element.getBoundingClientRect()
+      el.style.left = `${rect.left - containerRect.left}px`
+      el.style.top  = `${rect.bottom - containerRect.top + 4}px`
+      if (timeout > 0) {
+        this.tooltipTimers.set(object, setTimeout(() => {
+          el!.style.display = 'none'
+          this.tooltipTimers.delete(object)
+        }, timeout))
+      }
+    }
+
+    if (delay > 0) {
+      this.tooltipTimers.set(object, setTimeout(show, delay))
+    } else {
+      show()
+    }
   }
 
   private syncChildren(object: QmlObject, element: HTMLElement): void {

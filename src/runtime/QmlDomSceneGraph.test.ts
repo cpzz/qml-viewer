@@ -1495,9 +1495,12 @@ describe('QmlDomSceneGraph', () => {
     expect(fill.getProperty('color')).toBe('steelblue')
 
     vi.advanceTimersByTime(120)
-    // 动画完成：progress=1 → 颜色切换为目标色
+    // progress=1 reached; Behavior on color drives a 200ms ColorAnimation → advance past it
     expect(Number(delayed.getProperty('progress'))).toBeGreaterThanOrEqual(1)
-    expect(fill.getProperty('color')).toBe('tomato')
+    vi.advanceTimersByTime(200)
+    // ColorAnimation resolves to hex; accept both 'tomato' and its hex equivalent #ff6347
+    const finalColor = String(fill.getProperty('color'))
+    expect(['tomato', '#ff6347']).toContain(finalColor)
 
     expect(errors).toEqual([])
     errorSpy.mockRestore()

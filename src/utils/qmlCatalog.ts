@@ -65,11 +65,17 @@ const commonProperties: QmlPropertyDefinition[] = [
   ]),
   property('transform', 'list', undefined, undefined, true),
   property('containmentMask', 'expression'), property('palette', 'expression'),
-  ...[
-    'accent', 'alternateBase', 'base', 'brightText', 'button', 'buttonText', 'dark',
-    'highlight', 'highlightedText', 'light', 'link', 'linkVisited', 'mid', 'midlight',
-    'placeholderText', 'shadow', 'text', 'toolTipBase', 'toolTipText', 'window', 'windowText',
-  ].map(name => property(`palette.${name}`, 'color')),
+  ...(() => {
+    const roles = [
+      'accent', 'alternateBase', 'base', 'brightText', 'button', 'buttonText', 'dark',
+      'highlight', 'highlightedText', 'light', 'link', 'linkVisited', 'mid', 'midlight',
+      'placeholderText', 'shadow', 'text', 'toolTipBase', 'toolTipText', 'window', 'windowText',
+    ]
+    return [
+      ...roles.map(name => property(`palette.${name}`, 'color')),
+      ...['active', 'inactive', 'disabled'].flatMap(g => roles.map(r => property(`palette.${g}.${r}`, 'color'))),
+    ]
+  })(),
   property('layer.effect', 'component'), property('layer.enabled', 'boolean'),
   property('layer.format', 'enum'), property('layer.live', 'boolean'),
   property('layer.mipmap', 'boolean'), property('layer.samplerName', 'string'),

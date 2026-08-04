@@ -164,12 +164,14 @@ function instantiateNode(
     if (name === 'delegate' && object.hasProperty(name)) {
       const factory: InlineDelegateFactory = {
         create: (delegateParent: QmlObject | null = null, context = {}) => {
-          const instance = instantiateQmlDocument([child], registry, delegateParent)
+          // completeRoots=false so required properties are satisfied before complete()
+          const instance = instantiateQmlDocument([child], registry, delegateParent, false)
           const root = instance.roots[0]
           for (const [contextName, value] of Object.entries(context)) {
             if (!root.hasProperty(contextName)) root.defineProperty({ name: contextName, type: 'var' })
             root.setProperty(contextName, value)
           }
+          instance.roots.forEach(r => r.complete())
           factory.activate?.(instance)
           return instance
         },
@@ -533,7 +535,17 @@ export function activateQmlDocument(
       } else if (object.typeName === 'Shortcut' && options.shortcutEventTarget) {
         shortcutControllers.push(new QmlShortcutController(object, options.shortcutEventTarget))
       } else if (isDeclarativeAnimation(object)) {
+        // Property value source (e.g. NumberAnimation on x): inject target/property and auto-start
+        const behaviorOn = object.hasProperty('behaviorOn')
+          ? String(object.getProperty('behaviorOn') ?? '') : ''
+        if (behaviorOn && object.parent?.hasProperty(behaviorOn)) {
+          if (!object.isExplicitlySet('target')) object.setInternalProperty('target', object.parent)
+          if (!object.isExplicitlySet('property') && !object.isExplicitlySet('properties'))
+            object.setInternalProperty('property', behaviorOn)
+        }
         animationControllers.push(new QmlAnimationController(object, options.animationScheduler))
+        if (behaviorOn && !object.isExplicitlySet('running'))
+          object.setInternalProperty('running', true)
       } else if (object.typeName === 'Behavior' && object.parent) {
         const behaviorOn = object.getProperty('behaviorOn')
         if (typeof behaviorOn === 'string' && behaviorOn && object.parent.hasProperty(behaviorOn)) {

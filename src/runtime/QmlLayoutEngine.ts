@@ -8,9 +8,13 @@ function bounded(value: number, minimum: number, maximum: number): number {
 
 function childSize(child: QmlObject, axis: 'Width' | 'Height'): number {
   const preferredSize = Number(child.getProperty(`Layout.preferred${axis}`))
+  const axisLower = axis.toLowerCase()
+  // QML 优先级：Layout.preferredWidth > 显式 width > implicitWidth
   const preferred = preferredSize >= 0
     ? preferredSize
-    : Number(child.getProperty(`implicit${axis}`)) || Number(child.getProperty(axis.toLowerCase())) || 0
+    : child.isExplicitlySet(axisLower)
+      ? Number(child.getProperty(axisLower)) || 0
+      : Number(child.getProperty(`implicit${axis}`)) || 0
   const minimumValue = Number(child.getProperty(`Layout.minimum${axis}`))
   const maximumValue = Number(child.getProperty(`Layout.maximum${axis}`))
   const minimum = minimumValue >= 0 ? minimumValue : 0

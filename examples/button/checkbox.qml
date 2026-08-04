@@ -22,6 +22,7 @@ ColumnLayout {
     }
 
     // ---- 双态：clicked / toggled / pressed 信号 ----
+    // 期望：CheckBox 宽度随 text 变化；checked 时显示勾选标记；未选时空框
     Text { text: "Mode: two-state with signals"; color: "#e8e8e8"; font.pixelSize: 14 }
     RowLayout {
         CheckBox {

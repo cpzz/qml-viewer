@@ -466,11 +466,11 @@ function parseElement(s: string, pos: number, lineStarts: number[]): [QMLNode, n
   const name = matchIdentifier(s, pos)
   if (!name) return null
 
-  // `Behavior on <property> { ... }`：Behavior 后跟随 on <目标属性名>
+  // `Type on <property> { ... }` — Behavior and animation property value sources
   let nextPos = pos + name.length
   let behaviorOn: string | undefined
-  if (name === 'Behavior') {
-    const onMatch = s.slice(nextPos).match(/^on\s+([A-Za-z_]\w*)\s*/)
+  {
+    const onMatch = s.slice(nextPos).match(/^\s+on\s+([A-Za-z_][\w.]*)\s*/)
     if (onMatch) {
       behaviorOn = onMatch[1]
       nextPos += onMatch[0].length

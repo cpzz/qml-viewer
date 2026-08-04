@@ -28,6 +28,17 @@ const itemProperties: QmlRuntimePropertyDefinition[] = [
   property('childrenRect.y', 'real', 0, { readonly: true }),
   property('childrenRect.width', 'real', 0, { readonly: true }),
   property('childrenRect.height', 'real', 0, { readonly: true }),
+  // font.* is an inherited property in QML (all Items can propagate it)
+  property('font.family', 'string', ''),
+  property('font.pixelSize', 'real', 0),
+  property('font.pointSize', 'real', 0),
+  property('font.bold', 'bool', false),
+  property('font.italic', 'bool', false),
+  // ToolTip attached properties (Qt Quick Controls 2)
+  property('ToolTip.text', 'string', ''),
+  property('ToolTip.visible', 'bool', false),
+  property('ToolTip.delay', 'int', 0),
+  property('ToolTip.timeout', 'int', -1),
   property('visible', 'bool', true),
   property('enabled', 'bool', true),
   property('opacity', 'real', 1),
@@ -62,6 +73,33 @@ const itemProperties: QmlRuntimePropertyDefinition[] = [
   property('palette.toolTipText', 'color', '#000000'),
   property('palette.window', 'color', '#efefef'),
   property('palette.windowText', 'color', '#000000'),
+  // palette color groups (Qt 6.4+)
+  ...(['active', 'inactive', 'disabled'] as const).flatMap(g => {
+    const d = g === 'disabled'
+    return [
+      property(`palette.${g}.accent`,          'color', d ? '#7fb4d8' : '#308cc6'),
+      property(`palette.${g}.alternateBase`,    'color', '#f7f7f7'),
+      property(`palette.${g}.base`,             'color', '#ffffff'),
+      property(`palette.${g}.brightText`,       'color', d ? '#808080' : '#ffffff'),
+      property(`palette.${g}.button`,           'color', '#efefef'),
+      property(`palette.${g}.buttonText`,       'color', d ? '#808080' : '#000000'),
+      property(`palette.${g}.dark`,             'color', '#9f9f9f'),
+      property(`palette.${g}.highlight`,        'color', d ? '#aac4e0' : '#308cc6'),
+      property(`palette.${g}.highlightedText`,  'color', d ? '#808080' : '#ffffff'),
+      property(`palette.${g}.light`,            'color', '#ffffff'),
+      property(`palette.${g}.link`,             'color', d ? '#808080' : '#0000ff'),
+      property(`palette.${g}.linkVisited`,      'color', d ? '#808080' : '#ff00ff'),
+      property(`palette.${g}.mid`,              'color', '#b8b8b8'),
+      property(`palette.${g}.midlight`,         'color', '#cacaca'),
+      property(`palette.${g}.placeholderText`,  'color', d ? '#80808080' : '#80000000'),
+      property(`palette.${g}.shadow`,           'color', '#767676'),
+      property(`palette.${g}.text`,             'color', d ? '#808080' : '#000000'),
+      property(`palette.${g}.toolTipBase`,      'color', '#ffffdc'),
+      property(`palette.${g}.toolTipText`,      'color', d ? '#808080' : '#000000'),
+      property(`palette.${g}.window`,           'color', '#efefef'),
+      property(`palette.${g}.windowText`,       'color', d ? '#808080' : '#000000'),
+    ]
+  }),
   property('focus', 'bool', false),
   property('activeFocus', 'bool', false, { readonly: true }),
   property('activeFocusOnTab', 'bool', false),
@@ -254,7 +292,20 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('truncated', 'bool', false, { readonly: true }),
     ],
   },
-  { name: 'Label', baseType: 'Text', properties: [property('padding', 'real', 0)] },
+  { name: 'Label', baseType: 'Control', properties: [
+    property('text', 'string', ''),
+    property('color', 'color', 'black'),
+    property('wrapMode', 'var', 'Text.NoWrap'),
+    property('elide', 'var', 'Text.ElideNone'),
+    property('maximumLineCount', 'int', 2147483647),
+    property('lineHeight', 'real', 1.0),
+    property('lineHeightMode', 'var', 'Text.ProportionalHeight'),
+    property('horizontalAlignment', 'var', 'Text.AlignLeft'),
+    property('verticalAlignment', 'var', 'Text.AlignTop'),
+    property('contentWidth', 'real', 0, { readonly: true }),
+    property('contentHeight', 'real', 0, { readonly: true }),
+    property('truncated', 'bool', false, { readonly: true }),
+  ] },
   {
     name: 'Image',
     baseType: 'Item',
@@ -486,6 +537,8 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('section.property', 'string', ''),
       property('highlight', 'var', null),
       property('highlightItem', 'var', null, { readonly: true }),
+      property('highlightMoveDuration', 'int', 300),
+      property('highlightMoveVelocity', 'real', 400),
       property('snapMode', 'var', 'ListView.NoSnap'),
       property('header', 'var', null),
       property('footer', 'var', null),
@@ -623,6 +676,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
     properties: [
       property('enabled', 'bool', true),
       property('animation', 'var', null, { default: true }),
+      property('behaviorOn', 'string', ''),
     ],
   },
   {
@@ -638,6 +692,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('easing.type', 'var', 'Easing.Linear'),
       property('running', 'bool', false),
       property('loops', 'int', 1),
+      property('behaviorOn', 'string', ''),
     ],
     signals: ['started', 'stopped', 'finished'],
   },
@@ -724,7 +779,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
     ],
   },
   {
-    name: 'Button',
+    name: 'AbstractButton',
     baseType: 'Control',
     properties: [
       property('text', 'string', ''),
@@ -737,8 +792,6 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('display', 'enum', 0),
       property('down', 'bool', false),
       property('pressed', 'bool', false, { readonly: true }),
-      property('flat', 'bool', false),
-      property('highlighted', 'bool', false),
       property('pressX', 'real', 0, { readonly: true }),
       property('pressY', 'real', 0, { readonly: true }),
       property('implicitIndicatorWidth', 'real', 0, { readonly: true }),
@@ -767,6 +820,14 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       },
     },
   },
+  {
+    name: 'Button',
+    baseType: 'AbstractButton',
+    properties: [
+      property('flat', 'bool', false),
+      property('highlighted', 'bool', false),
+    ],
+  },
   { name: 'RoundButton', baseType: 'Button', properties: [property('radius', 'real', 999)] },
   { name: 'ToolButton', baseType: 'Button', properties: [property('implicitHeight', 'real', 40, { readonly: true })] },
   {
@@ -776,8 +837,9 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   },
   {
     name: 'CheckBox',
-    baseType: 'Button',
+    baseType: 'AbstractButton',
     properties: [
+      property('checkable', 'bool', true),
       property('checkState', 'int', 0), // Qt.Unchecked = 0, Qt.PartiallyChecked = 1, Qt.Checked = 2
       property('tristate', 'bool', false),
       property('nextCheckState', 'var', null),
@@ -785,13 +847,25 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   },
   {
     name: 'RadioButton',
-    baseType: 'CheckBox',
-    properties: [property('ButtonGroup.group', 'var', null)],
+    baseType: 'Button',
+    properties: [
+      property('checkable', 'bool', true),
+      property('autoExclusive', 'bool', true),
+      property('ButtonGroup.group', 'var', null),
+    ],
     methods: {
       toggle() { if (!this.getProperty('checked')) this.setProperty('checked', true) },
     },
   },
-  { name: 'Switch', baseType: 'CheckBox' },
+  {
+    name: 'Switch',
+    baseType: 'Button',
+    properties: [
+      property('checkable', 'bool', true),
+      property('position', 'real', 0, { readonly: true }),
+      property('visualPosition', 'real', 0, { readonly: true }),
+    ],
+  },
   {
     name: 'TabButton',
     baseType: 'Button',
@@ -819,6 +893,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('placeholderTextColor', 'color', '#80000000'),
       property('readOnly', 'bool', false),
       property('echoMode', 'var', 'TextInput.Normal'),
+      property('maximumLength', 'int', 32767),
       property('cursorPosition', 'int', 0),
       property('length', 'int', 0, { readonly: true }),
       property('selectedText', 'string', '', { readonly: true }),
@@ -883,6 +958,9 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('from', 'int', 0), property('to', 'int', 99),
       property('value', 'int', 0), property('stepSize', 'int', 1),
       property('editable', 'bool', true),
+      property('wrap', 'bool', false),
+      property('textFromValue', 'var', null),
+      property('valueFromText', 'var', null),
     ],
     signals: ['valueModified'],
   },

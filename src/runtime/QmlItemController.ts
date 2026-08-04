@@ -1,11 +1,17 @@
 import { QmlObject } from './QmlObject'
 
 const geometryProperties = ['x', 'y', 'width', 'height', 'visible'] as const
-const paletteRoles = [
+const paletteBaseNames = [
   'accent', 'alternateBase', 'base', 'brightText', 'button', 'buttonText', 'dark',
   'highlight', 'highlightedText', 'light', 'link', 'linkVisited', 'mid', 'midlight',
   'placeholderText', 'shadow', 'text', 'toolTipBase', 'toolTipText', 'window', 'windowText',
+]
+const paletteRoles = [
+  ...paletteBaseNames,
+  ...['active', 'inactive', 'disabled'].flatMap(g => paletteBaseNames.map(r => `${g}.${r}`)),
 ].map(role => `palette.${role}`)
+
+const fontRoles = ['family', 'pixelSize', 'pointSize', 'bold', 'italic'].map(r => `font.${r}`)
 
 function rootOf(item: QmlObject): QmlObject {
   let root = item
@@ -74,8 +80,11 @@ export class QmlItemController {
   private requestedEnabled: boolean
   private readonly paletteDefaults = new Map<string, unknown>()
   private readonly paletteOverrides = new Set<string>()
+  private readonly fontDefaults = new Map<string, unknown>()
+  private readonly fontOverrides = new Set<string>()
   private applyingAvailability = false
   private applyingPalette = false
+  private applyingFont = false
 
   constructor(private readonly item: QmlObject) {
     if (!item.hasProperty('children')) throw new Error('QmlItemController requires an Item object')
@@ -86,6 +95,14 @@ export class QmlItemController {
       if (item.isPropertyAssigned(name)) this.paletteOverrides.add(name)
       this.unsubscribe.push(item.onPropertyChanged(name, () => {
         if (!this.applyingPalette) this.paletteOverrides.add(name)
+      }))
+    })
+    fontRoles.forEach(name => {
+      if (!item.hasProperty(name)) return
+      this.fontDefaults.set(name, item.getProperty(name))
+      if (item.isPropertyAssigned(name)) this.fontOverrides.add(name)
+      this.unsubscribe.push(item.onPropertyChanged(name, () => {
+        if (!this.applyingFont) this.fontOverrides.add(name)
       }))
     })
     this.unsubscribe.push(item.connectSignal('childrenChanged', () => this.bindChildren()))
@@ -190,9 +207,15 @@ export class QmlItemController {
       paletteRoles.forEach(name => {
         this.parentUnsubscribe.push(parent.onPropertyChanged(name, () => this.applyPalette()))
       })
+      fontRoles.forEach(name => {
+        if (parent.hasProperty(name)) {
+          this.parentUnsubscribe.push(parent.onPropertyChanged(name, () => this.applyFont()))
+        }
+      })
     }
     this.applyAvailability()
     this.applyPalette()
+    this.applyFont()
   }
 
   private applyAvailability(): void {
@@ -216,5 +239,17 @@ export class QmlItemController {
       this.item.setInternalProperty(name, value)
     })
     this.applyingPalette = false
+  }
+
+  private applyFont(): void {
+    const parent = this.item.parent
+    this.applyingFont = true
+    fontRoles.forEach(name => {
+      if (this.fontOverrides.has(name)) return
+      if (!this.item.hasProperty(name)) return
+      const value = parent?.hasProperty(name) ? parent.getProperty(name) : this.fontDefaults.get(name)
+      if (value !== undefined) this.item.setInternalProperty(name, value)
+    })
+    this.applyingFont = false
   }
 }

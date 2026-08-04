@@ -48,9 +48,12 @@ ColumnLayout {
         RoundButton {
             text: "r = 18  (capsule)"
             width: 180; height: 36
+            palette.button: "red"
+            palette.highlight: "#FF0000"
             radius: 18
             onClicked: statusText.text = "clicked: radius 18"
         }
+        
     }
 
     // ---- 宽高不等：椭圆裁切效果 ----
