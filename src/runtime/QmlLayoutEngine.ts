@@ -2,6 +2,10 @@ import { QmlObject } from './QmlObject'
 
 const layoutTypes = new Set(['RowLayout', 'ColumnLayout', 'GridLayout'])
 
+function layoutChildren(layout: QmlObject): QmlObject[] {
+  return layout.children.filter(child => child.typeName !== 'Repeater' && child.hasProperty('visible') && child.getProperty('visible'))
+}
+
 function bounded(value: number, minimum: number, maximum: number): number {
   return Math.max(minimum, Math.min(maximum, value))
 }
@@ -67,6 +71,7 @@ export class QmlLayoutEngine {
   private readonly unsubscribe: Array<() => void> = []
   private childUnsubscribe: Array<() => void> = []
   private updating = false
+  private pending = false
 
   constructor(private readonly layout: QmlObject) {
     if (!layoutTypes.has(layout.typeName)) throw new Error('QmlLayoutEngine requires a QML Layout object')
@@ -83,11 +88,17 @@ export class QmlLayoutEngine {
   }
 
   relayout(): void {
-    if (this.updating) return
+    if (this.updating) {
+      this.pending = true
+      return
+    }
     this.updating = true
     try {
-      if (this.layout.typeName === 'GridLayout') this.layoutGrid()
-      else this.layoutLinear(this.layout.typeName === 'RowLayout')
+      do {
+        this.pending = false
+        if (this.layout.typeName === 'GridLayout') this.layoutGrid()
+        else this.layoutLinear(this.layout.typeName === 'RowLayout')
+      } while (this.pending)
     } finally {
       this.updating = false
     }
@@ -95,7 +106,7 @@ export class QmlLayoutEngine {
 
   private bindChildren(): void {
     this.childUnsubscribe.forEach(unsubscribe => unsubscribe())
-    this.childUnsubscribe = this.layout.children.flatMap(child => (
+    this.childUnsubscribe = layoutChildren(this.layout).flatMap(child => (
       child.getPropertyNames()
         .filter(name => name.startsWith('Layout.') || name === 'visible' || name.startsWith('implicit'))
         .map(name => child.onPropertyChanged(name, () => this.relayout()))
@@ -104,7 +115,7 @@ export class QmlLayoutEngine {
   }
 
   private layoutLinear(horizontal: boolean): void {
-    const children = this.layout.children.filter(child => child.hasProperty('visible') && child.getProperty('visible'))
+    const children = layoutChildren(this.layout)
     if (children.length === 0) return
     const spacing = Number(this.layout.getProperty('spacing')) || 0
     const primaryStart: LayoutSide = horizontal ? 'left' : 'top'
@@ -183,27 +194,78 @@ export class QmlLayoutEngine {
   }
 
   private layoutGrid(): void {
-    const children = this.layout.children.filter(child => child.hasProperty('visible') && child.getProperty('visible'))
+    const children = layoutChildren(this.layout)
     const columns = Math.max(1, Number(this.layout.getProperty('columns')) || 1)
     const columnSpacing = Number(this.layout.getProperty('columnSpacing')) || 0
     const rowSpacing = Number(this.layout.getProperty('rowSpacing')) || 0
-    const rows = Math.max(1, ...children.map((child, index) => {
-      const explicitRow = Number(child.getProperty('Layout.row'))
-      const row = explicitRow >= 0 ? explicitRow : Math.floor(index / columns)
-      return row + Math.max(1, Number(child.getProperty('Layout.rowSpan')) || 1)
-    }))
-    const cellWidth = Math.max(0, (Number(this.layout.getProperty('width')) - columnSpacing * (columns - 1)) / columns)
-    const cellHeight = Math.max(0, (Number(this.layout.getProperty('height')) - rowSpacing * (rows - 1)) / rows)
-
-    children.forEach((child, index) => {
+    const occupied = new Set<string>()
+    const placements = children.map(child => {
       const explicitRow = Number(child.getProperty('Layout.row'))
       const explicitColumn = Number(child.getProperty('Layout.column'))
-      const row = explicitRow >= 0 ? explicitRow : Math.floor(index / columns)
-      const column = explicitColumn >= 0 ? explicitColumn : index % columns
       const rowSpan = Math.max(1, Number(child.getProperty('Layout.rowSpan')) || 1)
-      const columnSpan = Math.max(1, Number(child.getProperty('Layout.columnSpan')) || 1)
-      const availableWidth = cellWidth * columnSpan + columnSpacing * (columnSpan - 1)
-      const availableHeight = cellHeight * rowSpan + rowSpacing * (rowSpan - 1)
+      const columnSpan = Math.min(columns, Math.max(1, Number(child.getProperty('Layout.columnSpan')) || 1))
+      const fits = (row: number, column: number) => (
+        column + columnSpan <= columns &&
+        Array.from({ length: rowSpan }, (_, rowOffset) => row + rowOffset).every(candidateRow => (
+          Array.from({ length: columnSpan }, (_, columnOffset) => column + columnOffset)
+            .every(candidateColumn => !occupied.has(`${candidateRow}:${candidateColumn}`))
+        ))
+      )
+      let row = explicitRow >= 0 ? explicitRow : 0
+      let column = explicitColumn >= 0 ? explicitColumn : 0
+      while (!fits(row, column)) {
+        if (explicitRow >= 0 && explicitColumn < 0) column++
+        else if (explicitColumn >= 0 && explicitRow < 0) row++
+        else {
+          column++
+          if (column >= columns) {
+            column = 0
+            row++
+          }
+        }
+      }
+      for (let rowOffset = 0; rowOffset < rowSpan; rowOffset++) {
+        for (let columnOffset = 0; columnOffset < columnSpan; columnOffset++) {
+          occupied.add(`${row + rowOffset}:${column + columnOffset}`)
+        }
+      }
+      return { child, row, column, rowSpan, columnSpan }
+    })
+    const rows = Math.max(1, ...placements.map(({ row, rowSpan }) => row + rowSpan))
+    const columnWidths = Array.from({ length: columns }, () => 0)
+    const rowHeights = Array.from({ length: rows }, () => 0)
+    const applyTrackMinimum = (tracks: number[], start: number, span: number, required: number, spacing: number) => {
+      const current = tracks.slice(start, start + span).reduce((total, size) => total + size, 0) + spacing * (span - 1)
+      const addition = Math.max(0, required - current) / span
+      for (let offset = 0; offset < span; offset++) tracks[start + offset] += addition
+    }
+    placements
+      .sort((left, right) => left.columnSpan + left.rowSpan - right.columnSpan - right.rowSpan)
+      .forEach(({ child, row, column, rowSpan, columnSpan }) => {
+        applyTrackMinimum(columnWidths, column, columnSpan, childSize(child, 'Width'), columnSpacing)
+        applyTrackMinimum(rowHeights, row, rowSpan, childSize(child, 'Height'), rowSpacing)
+      })
+    const implicitWidth = columnWidths.reduce((total, size) => total + size, 0) + columnSpacing * (columns - 1)
+    const implicitHeight = rowHeights.reduce((total, size) => total + size, 0) + rowSpacing * (rows - 1)
+    this.layout.setInternalProperty('implicitWidth', implicitWidth)
+    this.layout.setInternalProperty('implicitHeight', implicitHeight)
+    const fitTracks = (tracks: number[], total: number, spacing: number) => {
+      const available = Math.max(0, total - spacing * (tracks.length - 1))
+      const current = tracks.reduce((sum, size) => sum + size, 0)
+      const adjustment = (available - current) / tracks.length
+      return tracks.map(size => Math.max(0, size + adjustment))
+    }
+    const useLayoutWidth = this.layout.isPropertyAssigned('width') || Boolean(this.layout.getProperty('Layout.fillWidth'))
+    const useLayoutHeight = this.layout.isPropertyAssigned('height') || Boolean(this.layout.getProperty('Layout.fillHeight'))
+    const fittedColumns = fitTracks(columnWidths, useLayoutWidth ? Number(this.layout.getProperty('width')) : implicitWidth, columnSpacing)
+    const fittedRows = fitTracks(rowHeights, useLayoutHeight ? Number(this.layout.getProperty('height')) : implicitHeight, rowSpacing)
+    const trackOffset = (tracks: number[], index: number, spacing: number) => (
+      tracks.slice(0, index).reduce((total, size) => total + size, 0) + spacing * index
+    )
+
+    placements.forEach(({ child, row, column, rowSpan, columnSpan }) => {
+      const availableWidth = fittedColumns.slice(column, column + columnSpan).reduce((total, size) => total + size, 0) + columnSpacing * (columnSpan - 1)
+      const availableHeight = fittedRows.slice(row, row + rowSpan).reduce((total, size) => total + size, 0) + rowSpacing * (rowSpan - 1)
       const alignment = child.getProperty('Layout.alignment')
       const hasExplicitAlignment = Boolean(alignment)
       const width = child.getProperty('Layout.fillWidth') || !hasExplicitAlignment
@@ -214,11 +276,11 @@ export class QmlLayoutEngine {
         : Math.min(availableHeight, childSize(child, 'Height'))
       child.setInternalProperty(
         'x',
-        column * (cellWidth + columnSpacing) + alignedOffset(availableWidth, width, alignment, 'horizontal'),
+        trackOffset(fittedColumns, column, columnSpacing) + alignedOffset(availableWidth, width, alignment, 'horizontal'),
       )
       child.setInternalProperty(
         'y',
-        row * (cellHeight + rowSpacing) + alignedOffset(availableHeight, height, alignment, 'vertical'),
+        trackOffset(fittedRows, row, rowSpacing) + alignedOffset(availableHeight, height, alignment, 'vertical'),
       )
       child.setInternalProperty('width', width)
       child.setInternalProperty('height', height)

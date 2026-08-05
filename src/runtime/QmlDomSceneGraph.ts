@@ -98,7 +98,7 @@ function modelRows(model: unknown): unknown[] {
 }
 
 function isVisualObject(object: QmlObject): boolean {
-  return object.hasProperty('x') && object.hasProperty('width') && object.hasProperty('visible')
+  return object.typeName !== 'Repeater' && object.hasProperty('x') && object.hasProperty('width') && object.hasProperty('visible')
 }
 
 function tagNameFor(object: QmlObject): keyof HTMLElementTagNameMap {
@@ -156,7 +156,10 @@ function contentImplicitSize(object: QmlObject): { width: number; height: number
     }
   }
   if (buttonTypes.has(object.typeName)) {
-    return { width: Math.max(64, text.length * 8 + 24), height: 30 }
+    const height = object.typeName === 'ItemDelegate'
+      ? Number(object.getProperty('implicitHeight')) || 30
+      : 30
+    return { width: Math.max(64, text.length * 8 + 24), height }
   }
   if (checkTypes.has(object.typeName)) return { width: Math.max(24, text.length * 8 + 24), height: 20 }
   if (textInputTypes.has(object.typeName)) {
@@ -221,9 +224,11 @@ function orderedVisualChildren(object: QmlObject): QmlObject[] {
   const background = object.hasProperty('background') ? object.getProperty('background') : null
   const contentItem = object.hasProperty('contentItem') ? object.getProperty('contentItem') : null
   const loaderItem = object.typeName === 'Loader' ? object.getProperty('item') : null
+  const highlightItem = object.hasProperty('highlightItem') ? object.getProperty('highlightItem') : null
   return [
     ...(background instanceof QmlObject ? [background] : []),
-    ...object.children.filter(child => child !== background && child !== contentItem && child !== loaderItem),
+    ...(highlightItem instanceof QmlObject ? [highlightItem] : []),
+    ...object.children.filter(child => child !== background && child !== contentItem && child !== loaderItem && child !== highlightItem),
     ...(contentItem instanceof QmlObject ? [contentItem] : []),
     ...(loaderItem instanceof QmlObject ? [loaderItem] : []),
   ]
@@ -451,8 +456,14 @@ export class QmlDomSceneGraph {
 
     const unsubscribe = object.getPropertyNames().map(name => object.onPropertyChanged(name, () => {
       if (name === 'activeFocus') return
+      if (name === 'focus') {
+        this.syncFocusState(object, element)
+        return
+      }
       this.updateBranch(object)
-      if (name === 'item' || name === 'background' || name === 'contentItem') this.syncChildren(object, element)
+      if (name === 'item' || name === 'background' || name === 'contentItem' || name === 'highlightItem') {
+        this.syncChildren(object, element)
+      }
     }))
     unsubscribe.push(registerItemGrabProvider(object, createDomGrabProvider(element)))
     if (object.hasSignal('childrenChanged')) {
@@ -523,7 +534,7 @@ export class QmlDomSceneGraph {
         object.setInternalProperty('availableHeight', Math.max(0, geometry.height - top - bottom))
       }
     }
-    const positionedByParent = ['Row', 'Column', 'RowLayout', 'ColumnLayout', 'GridLayout', 'Flow', 'SplitView', 'TabBar', 'ToolBar']
+    const positionedByParent = ['Row', 'Column', 'RowLayout', 'ColumnLayout', 'Flow', 'SplitView', 'TabBar', 'ToolBar']
       .includes(object.parent?.typeName ?? '') ||
       (object.parent?.typeName === 'ScrollView' && layoutTypes.has(object.typeName)) ||
       contentContainerTypes.has(object.parent?.typeName ?? '')
@@ -535,14 +546,20 @@ export class QmlDomSceneGraph {
     style.zIndex = cssValue(object.getProperty('z'))
     style.opacity = cssValue(Math.max(0, Math.min(1, Number(object.getProperty('opacity')))))
     style.display = object.getProperty('visible') ? '' : 'none'
+    element.classList.toggle('qml-disabled', object.hasProperty('enabled') && !object.getProperty('enabled'))
     if (object.parent && ['StackLayout', 'SwipeView', 'StackView'].includes(object.parent.typeName)) {
       const siblings = orderedVisualChildren(object.parent)
       const currentIndex = Number(object.parent.getProperty('currentIndex')) || 0
       if (siblings.indexOf(object) !== currentIndex) style.display = 'none'
     }
     style.pointerEvents = object.getProperty('enabled') ? '' : 'none'
-    if (positionedByParent || contentContainerTypes.has(object.parent?.typeName ?? '')) {
-      style.maxWidth = '100%'
+    const preservesExplicitWidth = object.isExplicitlySet('width') && geometry.width > 0
+      && !object.getProperty('Layout.fillWidth')
+    if (contentContainerTypes.has(object.parent?.typeName ?? '') ||
+      (positionedByParent && !['GridLayout', 'Flow'].includes(object.typeName))) {
+      style.maxWidth = preservesExplicitWidth ? '' : '100%'
+    } else {
+      style.maxWidth = ''
     }
     if (geometry.width <= 0 && ['Column', 'ColumnLayout'].includes(object.parent?.typeName ?? '')) {
       style.width = 'auto'
@@ -591,7 +608,7 @@ export class QmlDomSceneGraph {
     if (layoutTypes.has(object.typeName)) {
       const margin = Math.max(0, Number(object.getProperty('anchors.margins')) || 0)
       style.boxSizing = 'border-box'
-      style.maxWidth = '100%'
+      if (!['GridLayout', 'Flow'].includes(object.typeName)) style.maxWidth = '100%'
       if (object.parent?.typeName === 'ScrollView') {
         style.width = 'auto'
         style.margin = `${margin}px`
@@ -647,9 +664,7 @@ export class QmlDomSceneGraph {
       else if (aligned('AlignRight', 2)) style.alignSelf = rightToLeft ? 'flex-start' : 'flex-end'
       else if (aligned('AlignHCenter', 4)) style.alignSelf = 'center'
     }
-    const tabFocus = object.hasProperty('focusPolicy') && focusPolicyAllows(object.getProperty('focusPolicy'), 'tab')
-    element.tabIndex = object.getProperty('focus') || object.getProperty('activeFocusOnTab') || tabFocus ? 0 : -1
-    if (object.getProperty('focus') && this.domDocument.activeElement !== element) element.focus()
+    this.syncFocusState(object, element)
 
     const objectName = cssValue(object.getProperty('objectName'))
     if (objectName) element.dataset.qmlObjectName = objectName
@@ -787,7 +802,41 @@ export class QmlDomSceneGraph {
       style.fontFamily = cssValue(resolveInheritedFontProperty(object, 'font.family'))
       style.fontWeight = resolveInheritedFontProperty(object, 'font.bold') ? 'bold' : 'normal'
       style.fontStyle = resolveInheritedFontProperty(object, 'font.italic') ? 'italic' : 'normal'
-      style.whiteSpace = object.getProperty('wrapMode') === 'Text.NoWrap' ? 'pre' : 'pre-wrap'
+      const wrapMode = object.getProperty('wrapMode')
+      const noWrap = Number(wrapMode) === 0 || String(wrapMode).includes('NoWrap')
+      const wrapAnywhere = Number(wrapMode) === 2 || Number(wrapMode) === 3 || /WrapAnywhere|Text\.Wrap$/.test(String(wrapMode))
+      style.whiteSpace = noWrap ? 'pre' : 'pre-wrap'
+      style.overflowWrap = wrapAnywhere ? 'anywhere' : 'normal'
+      style.wordBreak = Number(wrapMode) === 2 || String(wrapMode).includes('WrapAnywhere') ? 'break-all' : 'normal'
+      const horizontalAlignment = object.getProperty('horizontalAlignment')
+      style.textAlign = Number(horizontalAlignment) === 2 || String(horizontalAlignment).includes('AlignRight')
+        ? 'right'
+        : Number(horizontalAlignment) === 4 || String(horizontalAlignment).includes('AlignHCenter')
+          ? 'center'
+          : 'left'
+      const verticalAlignment = object.getProperty('verticalAlignment')
+      style.alignContent = Number(verticalAlignment) === 128 || String(verticalAlignment).includes('AlignBottom')
+        ? 'end'
+        : Number(verticalAlignment) === 64 || String(verticalAlignment).includes('AlignVCenter')
+          ? 'center'
+          : 'start'
+      const lineHeight = Number(object.getProperty('lineHeight')) || 1
+      const fixedLineHeight = Number(object.getProperty('lineHeightMode')) === 1 || String(object.getProperty('lineHeightMode')).includes('FixedHeight')
+      style.lineHeight = fixedLineHeight ? cssLength(lineHeight) : String(lineHeight)
+      const maximumLineCount = Number(object.getProperty('maximumLineCount'))
+      const elide = object.getProperty('elide')
+      const hasElide = Number(elide) !== 3 && !String(elide).includes('ElideNone')
+      style.overflow = hasElide || maximumLineCount < 2147483647 ? 'hidden' : ''
+      style.textOverflow = hasElide ? 'ellipsis' : ''
+      if (hasElide && maximumLineCount >= 2147483647) style.whiteSpace = 'nowrap'
+      if (maximumLineCount < 2147483647) {
+        style.display = '-webkit-box'
+        style.setProperty('-webkit-box-orient', 'vertical')
+        style.setProperty('-webkit-line-clamp', String(Math.max(1, maximumLineCount)))
+      } else {
+        style.removeProperty('-webkit-box-orient')
+        style.removeProperty('-webkit-line-clamp')
+      }
       if (object.hasProperty('padding')) style.padding = cssLength(object.getProperty('padding'))
     }
 
@@ -818,6 +867,9 @@ export class QmlDomSceneGraph {
       element.classList.toggle('qml-checked', checked)
       element.classList.toggle('qml-partial', isPartial)
       element.classList.toggle('qml-disabled', !object.getProperty('enabled'))
+      element.setAttribute('role', isSwitch ? 'switch' : isRadio ? 'radio' : 'checkbox')
+      element.setAttribute('aria-checked', isPartial ? 'mixed' : String(checked))
+      element.setAttribute('aria-disabled', String(!object.getProperty('enabled')))
 
       caption.textContent = cssValue(object.getProperty('text'))
     }
@@ -962,15 +1014,15 @@ export class QmlDomSceneGraph {
       style.alignItems = object.typeName === 'RowLayout' ? 'center' : rightToLeft ? 'flex-end' : 'flex-start'
     }
     if (object.typeName === 'GridLayout') {
-      style.display = object.getProperty('visible') ? 'grid' : 'none'
-      style.gridTemplateColumns = `repeat(${Math.max(1, Number(object.getProperty('columns')) || 1)}, max-content)`
-      style.gap = cssLength(object.getProperty('spacing'))
-      style.alignItems = 'start'
+      style.display = object.getProperty('visible') ? 'block' : 'none'
     }
     if (object.typeName === 'Flow') {
       style.display = object.getProperty('visible') ? 'flex' : 'none'
       style.flexWrap = 'wrap'
       style.gap = cssLength(object.getProperty('spacing'))
+      const topToBottom = Number(object.getProperty('flow')) === 1 || String(object.getProperty('flow')).includes('TopToBottom')
+      style.flexDirection = topToBottom ? 'column' : 'row'
+      style.alignContent = 'flex-start'
     }
 
     if (['StackLayout', 'SwipeView', 'StackView'].includes(object.typeName)) {
@@ -1035,6 +1087,19 @@ export class QmlDomSceneGraph {
       element.classList.toggle('qml-tool-button', object.typeName === 'ToolButton')
       element.classList.toggle('qml-button-flat', Boolean(object.getProperty('flat')))
       element.classList.toggle('qml-button-highlighted', Boolean(object.getProperty('highlighted')))
+      if (object.typeName === 'ItemDelegate') {
+        style.textAlign = 'left'
+        if (object.isPropertyAssigned('leftPadding')) style.paddingLeft = cssLength(object.getProperty('leftPadding'))
+        if (object.isPropertyAssigned('rightPadding')) style.paddingRight = cssLength(object.getProperty('rightPadding'))
+        const content = element.querySelector<HTMLElement>('.qml-button-content')
+        if (content) {
+          content.style.justifyContent = 'flex-start'
+          content.style.width = '100%'
+        }
+      }
+      if (object.getProperty('highlighted')) {
+        style.color = resolveGroupedPaletteColor(object, 'highlightedText') ?? 'var(--qml-on-accent)'
+      }
       if (object.parent?.typeName === 'Menu') {
         // 菜单项：在 Menu flex column 中垂直排列，撑满宽度、文字左对齐。
         // 文本 span 必须参与流内布局（position: relative），否则 Menu 的
@@ -1272,12 +1337,15 @@ export class QmlDomSceneGraph {
       object.setInternalProperty('currentItem', values[current] ?? null)
     }
     if (object.typeName === 'TabBar') {
+      const parent = object.parent
+      const parentFooter = parent?.hasProperty('footer') ? parent.getProperty('footer') : null
+      const parentHeader = parent?.hasProperty('header') ? parent.getProperty('header') : null
       style.display = object.getProperty('visible') ? 'flex' : 'none'
       style.alignItems = 'stretch'
       style.gap = '2px'
       style.backgroundColor = 'var(--qml-panel-muted-bg)'
-      style.borderTop = object.parent?.getProperty('footer') === object ? '1px solid var(--qml-control-border)' : ''
-      style.borderBottom = object.parent?.getProperty('header') === object ? '1px solid var(--qml-control-border)' : ''
+      style.borderTop = parentFooter === object ? '1px solid var(--qml-control-border)' : ''
+      style.borderBottom = parentHeader === object ? '1px solid var(--qml-control-border)' : ''
       const tabs = orderedVisualChildren(object)
       let currentIndex = Number(object.getProperty('currentIndex'))
       if (tabs.length === 0) {
@@ -1511,6 +1579,16 @@ export class QmlDomSceneGraph {
     object.children.forEach(child => this.updateBranch(child))
   }
 
+  private syncFocusState(object: QmlObject, element: HTMLElement): void {
+    const tabFocus = object.hasProperty('focusPolicy') && focusPolicyAllows(object.getProperty('focusPolicy'), 'tab')
+    const clickFocus = object.hasProperty('focusPolicy') && focusPolicyAllows(object.getProperty('focusPolicy'), 'click')
+    const keyboardFocusable = Boolean(object.getProperty('focus')) || Boolean(object.getProperty('activeFocusOnTab')) || tabFocus
+    if (keyboardFocusable) element.tabIndex = 0
+    else if (clickFocus) element.tabIndex = -1
+    else element.removeAttribute('tabindex')
+    if (object.getProperty('focus') && this.domDocument.activeElement !== element) element.focus()
+  }
+
   private syncTooltip(object: QmlObject, element: HTMLElement): void {
     if (!object.hasProperty('ToolTip.text')) return
     const text = String(object.getProperty('ToolTip.text') ?? '')
@@ -1561,13 +1639,15 @@ export class QmlDomSceneGraph {
   }
 
   private syncChildren(object: QmlObject, element: HTMLElement): void {
+    const children = orderedVisualChildren(object)
     for (const [mountedObject, node] of [...this.mounted]) {
-      if (node.parent === object && !object.children.includes(mountedObject)) {
+      if (node.parent === object && !children.includes(mountedObject)) {
         this.unmountObject(mountedObject)
       }
     }
-    for (const child of orderedVisualChildren(object)) {
+    for (const child of children) {
       if (!this.mounted.has(child)) this.mountObject(child, element, object)
+      else element.append(this.mounted.get(child)!.element)
     }
   }
 
@@ -2034,8 +2114,9 @@ export class QmlDomSceneGraph {
         }
         if (object.typeName === 'ItemDelegate' && object.hasProperty('index') && ['ListView', 'GridView', 'PathView'].includes(object.parent?.typeName ?? '')) {
           const index = Number(object.getProperty('index'))
-          object.parent!.setProperty('currentIndex', index)
-          object.parent!.emitSignal('activated', index)
+          const itemView = object.parent!
+          itemView.setProperty('currentIndex', index)
+          itemView.emitSignal('activated', index)
         }
         if (object.typeName === 'MenuItem' && object.parent?.typeName === 'Menu') object.parent.callMethod('close')
       }
@@ -2188,17 +2269,40 @@ export class QmlDomSceneGraph {
     }
 
     if (object.typeName === 'SpinBox') {
-      listen('input', event => {
-        object.setProperty('value', Number((event.currentTarget as HTMLInputElement).value))
+      const normalizeSpinBoxValue = (candidate: number): number => {
+        const from = Number(object.getProperty('from'))
+        const to = Number(object.getProperty('to'))
+        const lower = Math.min(from, to)
+        const upper = Math.max(from, to)
+        const wrap = Boolean(object.getProperty('wrap'))
+        if (!Number.isFinite(candidate)) return Number(object.getProperty('value')) || 0
+        if (wrap && upper > lower) {
+          if (candidate > upper) return lower
+          if (candidate < lower) return upper
+        }
+        return Math.max(lower, Math.min(upper, candidate))
+      }
+
+      const commitSpinBoxValue = (candidate: number) => {
+        object.setProperty('value', normalizeSpinBoxValue(candidate))
         object.emitSignal('valueModified')
+      }
+
+      listen('input', event => {
+        commitSpinBoxValue(Number((event.currentTarget as HTMLInputElement).value))
       })
       listen('keydown', event => {
         const key = (event as KeyboardEvent).key
         if (key !== 'ArrowUp' && key !== 'ArrowDown') return
+        event.preventDefault()
         const step = Number(object.getProperty('stepSize')) || 1
-        const value = Number(object.getProperty('value')) + (key === 'ArrowUp' ? step : -step)
-        object.setProperty('value', Math.max(Number(object.getProperty('from')), Math.min(Number(object.getProperty('to')), value)))
-        object.emitSignal('valueModified')
+        commitSpinBoxValue(Number(object.getProperty('value')) + (key === 'ArrowUp' ? step : -step))
+      })
+      listen('wheel', event => {
+        event.preventDefault()
+        const step = Number(object.getProperty('stepSize')) || 1
+        const direction = (event as WheelEvent).deltaY >= 0 ? -1 : 1
+        commitSpinBoxValue(Number(object.getProperty('value')) + direction * step)
       })
     }
 

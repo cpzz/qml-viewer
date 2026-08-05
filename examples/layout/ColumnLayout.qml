@@ -232,7 +232,7 @@ ColumnLayout {
         }
         Rectangle {
             id: uniformTall
-            Layout.preferredWidth: 180
+            Layout.preferredWidth: 280
             // 是否被展寄到大单元格大小（uniformCellSizes = true）
             Layout.preferredHeight: 50
             color: "#f3722c"

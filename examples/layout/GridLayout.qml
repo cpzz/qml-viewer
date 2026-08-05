@@ -25,6 +25,7 @@ ColumnLayout {
         Repeater {
             model: 9
             Rectangle {
+                property int index: 0
                 Layout.preferredWidth: 100; Layout.preferredHeight: 40
                 color: Qt.hsla(index / 9, 0.65, 0.50, 1)
                 radius: 4
@@ -118,6 +119,7 @@ ColumnLayout {
         Repeater {
             model: ["JavaScript", "TypeScript", "Python", "Go", "Rust", "C++", "Swift", "Kotlin", "Dart"]
             Rectangle {
+                property string modelData: ""
                 height: 28; radius: 14
                 width: tagText.implicitWidth + 20
                 color: "#334155"
@@ -140,6 +142,7 @@ ColumnLayout {
         Repeater {
             model: 12
             Rectangle {
+                property int index: 0
                 width: 36; height: 36; radius: 4
                 color: Qt.hsla(index / 12, 0.6, 0.5, 1)
                 Text {

@@ -30,6 +30,70 @@ describe('QmlDomSceneGraph', () => {
     expect(parseQmlColor(String(actual))).toEqual(parseQmlColor(expected))
   }
 
+  it('preserves explicit ListView and delegate widths inside a narrower layout', () => {
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      ColumnLayout {
+        width: 190
+        ListView {
+          id: list
+          width: 320
+          height: 100
+          ItemDelegate { id: delegateItem; width: 320; text: "Item" }
+        }
+      }
+    `))
+    const sceneGraph = new QmlDomSceneGraph(document)
+    const container = document.createElement('main')
+    sceneGraph.mount(qmlDocument, container)
+
+    const listElement = sceneGraph.getElement(qmlDocument.ids.get('list')!)!
+    const delegateElement = sceneGraph.getElement(qmlDocument.ids.get('delegateItem')!)!
+    expect(listElement.style.width).toBe('320px')
+    expect(listElement.style.maxWidth).toBe('')
+    expect(delegateElement.style.width).toBe('320px')
+    expect(delegateElement.style.maxWidth).toBe('')
+    sceneGraph.dispose()
+  })
+
+  it('keeps ListView current state separate from ItemDelegate highlighting and applies padding', () => {
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      ListView {
+        id: list
+        width: 320
+        height: 100
+        currentIndex: 0
+        ItemDelegate {
+          id: currentDelegate
+          property int index: 0
+          width: 320
+          leftPadding: 20
+          text: "Current"
+        }
+        ItemDelegate {
+          id: highlightedDelegate
+          property int index: 1
+          y: 30
+          width: 320
+          highlighted: true
+          text: "Highlighted"
+        }
+      }
+    `))
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, document.createElement('main'))
+    const current = sceneGraph.getElement(qmlDocument.ids.get('currentDelegate')!)!
+    const highlighted = sceneGraph.getElement(qmlDocument.ids.get('highlightedDelegate')!)!
+    const content = current.querySelector<HTMLElement>('.qml-button-content')!
+
+    expect(current.getAttribute('aria-selected')).toBe('true')
+    expect(current.classList.contains('qml-button-highlighted')).toBe(false)
+    expect(current.style.textAlign).toBe('left')
+    expect(current.style.paddingLeft).toBe('20px')
+    expect(content.style.justifyContent).toBe('flex-start')
+    expect(highlighted.classList.contains('qml-button-highlighted')).toBe(true)
+    sceneGraph.dispose()
+  })
+
   function createScene() {
     const qmlDocument = instantiateQmlDocument(parseQML(`
       Item {
@@ -121,6 +185,34 @@ describe('QmlDomSceneGraph', () => {
     expect(qmlDocument.ids.get('uniformShort')?.getProperty('height')).toBe(50)
     expect(qmlDocument.ids.get('uniformTall')?.getProperty('height')).toBe(50)
     expect(qmlDocument.ids.get('uniformTall')?.getProperty('y')).toBe(56)
+    sceneGraph.dispose()
+    qmlDocument.dispose()
+  })
+
+  it('renders layout/StackLayout.qml example without unknown-property errors', async () => {
+    const source = readFileSync(resolve(process.cwd(), 'examples/layout/StackLayout.qml'), 'utf8')
+    const nodes = parseQML(source)
+    expect(nodes[0]?.properties.footer).toBeUndefined()
+    const qmlDocument = activateQmlDocument(nodes, await QmlJsEngine.create())
+    const container = document.createElement('main')
+    const sceneGraph = new QmlDomSceneGraph(document)
+
+    sceneGraph.mount(qmlDocument, container)
+    const stack = qmlDocument.ids.get('stack')!
+    expect(qmlDocument.ids.get('tabBar')).toBeTruthy()
+    expect(stack.getProperty('count')).toBe(3)
+    const descendants = (object: QmlObject): QmlObject[] => [object, ...object.children.flatMap(descendants)]
+    const next = descendants(qmlDocument.roots[0]).find(object => (
+      object.hasProperty('text') && object.getProperty('text') === 'Next →'
+    ))!
+    expect(next.getProperty('enabled')).toBe(true)
+
+    next.emitSignal('clicked')
+
+    expect(stack.getProperty('currentIndex')).toBe(1)
+    expect(sceneGraph.getElement(stack.children[0])?.style.display).toBe('none')
+    expect(sceneGraph.getElement(stack.children[1])?.style.display).toBe('')
+
     sceneGraph.dispose()
     qmlDocument.dispose()
   })
@@ -849,6 +941,37 @@ describe('QmlDomSceneGraph', () => {
     controller.dispose()
   })
 
+  it('replaces a ListView highlight without leaving stale DOM and keeps it behind delegates', () => {
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      ListView {
+        id: view
+        width: 100
+        height: 60
+        Rectangle { id: oldHighlight; width: 100; height: 20; color: "blue" }
+        Text { id: delegateItem; width: 100; height: 20; text: "Gamma" }
+        Rectangle { id: newHighlight; width: 100; height: 20; color: "green" }
+      }
+    `))
+    const view = qmlDocument.ids.get('view')!
+    const oldHighlight = qmlDocument.ids.get('oldHighlight')!
+    const newHighlight = qmlDocument.ids.get('newHighlight')!
+    const delegateItem = qmlDocument.ids.get('delegateItem')!
+    view.setInternalProperty('highlightItem', oldHighlight)
+    const container = document.createElement('main')
+    const sceneGraph = new QmlDomSceneGraph(document)
+    sceneGraph.mount(qmlDocument, container)
+
+    oldHighlight.destroy()
+    view.setInternalProperty('highlightItem', newHighlight)
+
+    const viewElement = sceneGraph.getElement(view)!
+    expect(sceneGraph.getElement(oldHighlight)).toBeUndefined()
+    expect(viewElement.children).toHaveLength(2)
+    expect(viewElement.firstElementChild).toBe(sceneGraph.getElement(newHighlight))
+    expect(viewElement.lastElementChild).toBe(sceneGraph.getElement(delegateItem))
+    sceneGraph.dispose()
+  })
+
   it('projects basic controls and bridges native DOM interaction', async () => {
     const jsEngine = await QmlJsEngine.create()
     const qmlDocument = activateQmlDocument(parseQML(`
@@ -867,6 +990,7 @@ describe('QmlDomSceneGraph', () => {
         TextField { id: field; width: 120; height: 30 }
         CheckBox { id: check; width: 20; height: 20; text: "Enabled" }
         Slider { id: slider; width: 150; height: 24; from: 0; to: 10 }
+        Button { id: disabledButton; width: 100; height: 30; enabled: false }
       }
     `), jsEngine)
     const container = document.createElement('main')
@@ -877,6 +1001,7 @@ describe('QmlDomSceneGraph', () => {
     const field = qmlDocument.ids.get('field')!
     const check = qmlDocument.ids.get('check')!
     const slider = qmlDocument.ids.get('slider')!
+    const disabledButton = qmlDocument.ids.get('disabledButton')!
     const accepted: unknown[] = []
     field.connectSignal('accepted', () => accepted.push(true))
 
@@ -899,10 +1024,14 @@ describe('QmlDomSceneGraph', () => {
     expect(field.getProperty('text')).toBe('Hello')
     expect(accepted).toEqual([true])
     expect(check.getProperty('checked')).toBe(true)
+    expect(checkElement.getAttribute('role')).toBe('checkbox')
+    expect(checkElement.getAttribute('aria-checked')).toBe('true')
+    expect(checkElement.tabIndex).toBe(0)
     expect(slider.getProperty('value')).toBe(7)
     expect(sliderElement.querySelector('.qml-slider-track')).not.toBeNull()
     expect(sliderElement.querySelector('.qml-slider-fill')).not.toBeNull()
     expect(sliderElement.querySelector('.qml-slider-handle')).not.toBeNull()
+    expect(sceneGraph.getElement(disabledButton)?.classList.contains('qml-disabled')).toBe(true)
   })
 
   it('calls CheckBox.nextCheckState on click even without tristate', async () => {
@@ -999,6 +1128,7 @@ describe('QmlDomSceneGraph', () => {
     areaElement.dispatchEvent(new InputEvent('input', { bubbles: true }))
 
     expect(sceneGraph.getElement(qmlDocument.ids.get('label')!)?.textContent).toBe('Name')
+    expect(sceneGraph.getElement(qmlDocument.ids.get('label')!)?.tabIndex).toBe(-1)
     expect(areaElement.placeholder).toBe('Notes')
     expect(area.getProperty('text')).toBe('Updated')
     const radioElement = sceneGraph.getElement(qmlDocument.ids.get('radio')!)!
@@ -1008,8 +1138,44 @@ describe('QmlDomSceneGraph', () => {
     expect(sceneGraph.getElement(qmlDocument.ids.get('round')!)?.tagName).toBe('BUTTON')
     expect(sceneGraph.getElement(qmlDocument.ids.get('scroll')!)?.style.overflow).toBe('auto')
     expect(sceneGraph.getElement(qmlDocument.ids.get('group')!)?.getAttribute('aria-label')).toBe('Settings')
-    expect(sceneGraph.getElement(qmlDocument.ids.get('busy')!)?.getAttribute('aria-busy')).toBe('true')
+    const busyElement = sceneGraph.getElement(qmlDocument.ids.get('busy')!)!
+    expect(busyElement.getAttribute('aria-busy')).toBe('true')
+    expect(busyElement.tabIndex).toBe(-1)
+    expect(busyElement.hasAttribute('tabindex')).toBe(false)
+    expect(qmlDocument.ids.get('busy')?.getProperty('implicitHeight')).toBe(24)
     sceneGraph.dispose()
+  })
+
+  it('keeps nested layout geometry stable when a child gains focus', () => {
+    const qmlDocument = instantiateQmlDocument(parseQML(`
+      ColumnLayout {
+        RowLayout {
+          ColumnLayout {
+            BusyIndicator { running: true }
+            Label { id: label; text: "running: true"; font.pixelSize: 11; focusPolicy: Qt.ClickFocus }
+          }
+        }
+        Text { id: following; text: "State: disabled" }
+      }
+    `))
+    const sceneGraph = new QmlDomSceneGraph(document)
+    const container = document.createElement('main')
+    document.body.append(container)
+    sceneGraph.mount(qmlDocument, container)
+    const label = qmlDocument.ids.get('label')!
+    const following = qmlDocument.ids.get('following')!
+    const before = {
+      labelImplicitHeight: label.getProperty('implicitHeight'),
+      followingY: following.getProperty('y'),
+    }
+
+    sceneGraph.getElement(label)!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+
+    expect(label.getProperty('focus')).toBe(true)
+    expect(label.getProperty('implicitHeight')).toBe(before.labelImplicitHeight)
+    expect(following.getProperty('y')).toBe(before.followingY)
+    sceneGraph.dispose()
+    container.remove()
   })
 
   it('moves focus through explicit KeyNavigation targets', () => {
@@ -1313,11 +1479,11 @@ describe('QmlDomSceneGraph', () => {
     vi.useRealTimers()
   })
 
-  it('supports numeric keyboard stepping and Tumbler wheel wrapping', () => {
+  it('supports numeric keyboard stepping with SpinBox wrap and Tumbler wheel wrapping', () => {
     const qmlDocument = instantiateQmlDocument(parseQML(`
       Item {
         Slider { id: slider; from: 0; to: 10; value: 5; stepSize: 2 }
-        SpinBox { id: spin; value: 3; stepSize: 2 }
+        SpinBox { id: spin; from: 0; to: 5; value: 5; stepSize: 1; wrap: true }
         Tumbler { id: tumbler; model: ["A", "B"]; currentIndex: 1 }
       }
     `))
@@ -1330,7 +1496,7 @@ describe('QmlDomSceneGraph', () => {
 
     expect(qmlDocument.ids.get('slider')?.getProperty('value')).toBe(7)
     expect(qmlDocument.ids.get('slider')?.getProperty('position')).toBe(0.7)
-    expect(qmlDocument.ids.get('spin')?.getProperty('value')).toBe(5)
+    expect(qmlDocument.ids.get('spin')?.getProperty('value')).toBe(0)
     expect(qmlDocument.ids.get('tumbler')?.getProperty('currentIndex')).toBe(0)
     expect(qmlDocument.ids.get('tumbler')?.getProperty('currentItem')).toBe('A')
     sceneGraph.dispose()

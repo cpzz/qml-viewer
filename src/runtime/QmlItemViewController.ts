@@ -21,15 +21,27 @@ interface ListMetric {
   primary: number
   width: number
   height: number
+  sectionStart?: number
+  section?: string
 }
 
 function modelRows(model: unknown): unknown[] {
   if (model instanceof QmlListModel) return model.toArray()
+  if (model instanceof QmlObject && model.typeName === 'ListModel') {
+    return model.children
+        .filter(child => child.typeName === 'ListElement')
+      .map(child => Object.fromEntries(child.getPropertyNames().map(name => [name, child.getProperty(name)])))
+  }
   if (Array.isArray(model)) return [...model]
   if (typeof model === 'number' && Number.isFinite(model)) {
     return Array.from({ length: Math.max(0, Math.floor(model)) }, (_, index) => index)
   }
   return []
+}
+
+function isHorizontalListView(view: QmlObject): boolean {
+  const orientation = view.getProperty('orientation')
+  return orientation === 1 || orientation === 'Qt.Horizontal' || orientation === 'ListView.Horizontal'
 }
 
 function clampIndex(index: number, count: number): number {
@@ -39,7 +51,9 @@ function clampIndex(index: number, count: number): number {
 
 export class QmlItemViewController {
   private entries: ItemViewEntry[] = []
+  private sectionItems: QmlObject[] = []
   private highlightItem: QmlObject | null = null
+  private highlightGeometryUnsubscribe: Array<() => void> = []
   private modelUnsubscribe: (() => void) | null = null
   private readonly unsubscribe: Array<() => void>
   private rebuilding = false
@@ -71,16 +85,16 @@ export class QmlItemViewController {
     const count = Number(this.view.getProperty('count'))
     const target = clampIndex(index, count)
     if (target < 0) return
+    this.view.setProperty('currentIndex', target)
     if (this.view.typeName === 'GridView') {
       const columns = Math.max(1, Math.floor(Number(this.view.getProperty('width')) / Number(this.view.getProperty('cellWidth'))))
       this.view.setProperty('contentY', Math.floor(target / columns) * Number(this.view.getProperty('cellHeight')))
     } else if (this.view.typeName === 'ListView') {
       const rows = modelRows(this.view.getProperty('model'))
       const metrics = this.listMetrics(rows)
-      const horizontal = this.view.getProperty('orientation') === 'ListView.Horizontal'
+      const horizontal = isHorizontalListView(this.view)
       this.view.setProperty(horizontal ? 'contentX' : 'contentY', metrics[target]?.start ?? 0)
     }
-    this.view.setProperty('currentIndex', target)
   }
 
   incrementCurrentIndex(): void {
@@ -103,7 +117,7 @@ export class QmlItemViewController {
     const rows = modelRows(this.view.getProperty('model'))
     const metrics = this.listMetrics(rows)
     if (!metrics.length) return
-    const horizontal = this.view.getProperty('orientation') === 'ListView.Horizontal'
+    const horizontal = isHorizontalListView(this.view)
     const property = horizontal ? 'contentX' : 'contentY'
     const offset = Number(this.view.getProperty(property)) || 0
     const nearest = metrics.reduce((best, metric) => (
@@ -148,6 +162,14 @@ export class QmlItemViewController {
       const indices = this.visibleIndices(rows.length, listMetrics)
       this.entries = indices.map(index => {
         const row = rows[index]
+        const metric = listMetrics[index]
+        const sectionDelegate = this.view.hasProperty('section.delegate') ? this.view.getProperty('section.delegate') : null
+        if (metric?.sectionStart !== undefined && isDelegateFactory(sectionDelegate)) {
+          const sectionItem = sectionDelegate.create(this.view, { section: metric.section ?? '' }).roots[0]
+          sectionItem.setProperty('x', isHorizontalListView(this.view) ? metric.sectionStart : 0)
+          sectionItem.setProperty('y', isHorizontalListView(this.view) ? 0 : metric.sectionStart)
+          this.sectionItems.push(sectionItem)
+        }
         const context = row && typeof row === 'object' && !Array.isArray(row)
           ? { index, modelData: row, ...row as QmlListModelRow }
           : { index, modelData: row }
@@ -183,7 +205,7 @@ export class QmlItemViewController {
       return Array.from({ length: Math.max(0, last - first) }, (_, offset) => first + offset)
     }
 
-    const horizontal = this.view.getProperty('orientation') === 'ListView.Horizontal'
+    const horizontal = isHorizontalListView(this.view)
     const contentOffset = Number(this.view.getProperty(horizontal ? 'contentX' : 'contentY')) || 0
     const viewportSize = Number(this.view.getProperty(horizontal ? 'width' : 'height')) || 0
     const start = contentOffset - cache
@@ -197,16 +219,44 @@ export class QmlItemViewController {
   private listMetrics(rows: unknown[]): ListMetric[] {
     const delegate = this.view.getProperty('delegate')
     if (!isDelegateFactory(delegate)) return []
-    const horizontal = this.view.getProperty('orientation') === 'ListView.Horizontal'
+    const horizontal = isHorizontalListView(this.view)
     const spacing = Number(this.view.getProperty('spacing')) || 0
+    const sectionProperty = this.view.hasProperty('section.property')
+      ? String(this.view.getProperty('section.property') ?? '')
+      : ''
+    const sectionDelegate = this.view.hasProperty('section.delegate')
+      ? this.view.getProperty('section.delegate')
+      : null
+    let previousSection: unknown
     let cursor = 0
     return rows.map((row, index) => {
+      const section = sectionProperty && row && typeof row === 'object'
+        ? (row as QmlListModelRow)[sectionProperty]
+        : undefined
+      let sectionStart: number | undefined
+      if (sectionProperty && section !== previousSection && isDelegateFactory(sectionDelegate)) {
+        const sectionProbe = sectionDelegate.create(null, { section: section == null ? '' : String(section) }).roots[0]
+        const sectionPrimary = horizontal
+          ? Math.max(1, Number(sectionProbe.getProperty('width')) || Number(sectionProbe.getProperty('implicitWidth')) || 1)
+          : Math.max(1, Number(sectionProbe.getProperty('height')) || Number(sectionProbe.getProperty('implicitHeight')) || 1)
+        sectionProbe.destroy()
+        sectionStart = cursor
+        cursor += sectionPrimary + spacing
+      }
+      previousSection = section
       const probe = delegate.create().roots[0]
       this.applyContext(probe, index, row)
       const width = Math.max(1, Number(probe.getProperty('width')) || Number(probe.getProperty('implicitWidth')) || 1)
       const height = Math.max(1, Number(probe.getProperty('height')) || Number(probe.getProperty('implicitHeight')) || 1)
       probe.destroy()
-      const metric = { start: cursor, primary: horizontal ? width : height, width, height }
+      const metric = {
+        start: cursor,
+        primary: horizontal ? width : height,
+        width,
+        height,
+        sectionStart,
+        section: section == null ? undefined : String(section),
+      }
       cursor += metric.primary + spacing
       return metric
     })
@@ -214,7 +264,7 @@ export class QmlItemViewController {
 
   private positionItem(item: QmlObject, index: number, count: number, listMetrics: ListMetric[]): void {
     if (this.view.typeName === 'ListView') {
-      const horizontal = this.view.getProperty('orientation') === 'ListView.Horizontal'
+      const horizontal = isHorizontalListView(this.view)
       const metric = listMetrics[index]
       const total = listMetrics.length
         ? listMetrics.at(-1)!.start + listMetrics.at(-1)!.primary
@@ -260,10 +310,38 @@ export class QmlItemViewController {
 
   private updateCurrent(): void {
     if (this.rebuilding) return
+    if (this.ensureCurrentListItemVisible()) return
     const current = this.itemAt(Number(this.view.getProperty('currentIndex')))
     this.view.setInternalProperty('currentItem', current)
     this.updateHighlight()
     if (!current && Number(this.view.getProperty('currentIndex')) >= 0) this.rebuild()
+  }
+
+  private ensureCurrentListItemVisible(): boolean {
+    if (this.view.typeName !== 'ListView') return false
+    const rows = modelRows(this.view.getProperty('model'))
+    const index = Number(this.view.getProperty('currentIndex'))
+    const metrics = this.listMetrics(rows)
+    const metric = metrics[index]
+    if (!metric) return false
+
+    const horizontal = isHorizontalListView(this.view)
+    const offsetProperty = horizontal ? 'contentX' : 'contentY'
+    const viewportProperty = horizontal ? 'width' : 'height'
+    const offset = Number(this.view.getProperty(offsetProperty)) || 0
+    const viewportSize = Number(this.view.getProperty(viewportProperty)) || 0
+    const itemEnd = metric.start + metric.primary
+    let nextOffset = offset
+    if (metric.start < offset) nextOffset = metric.start
+    else if (itemEnd > offset + viewportSize) nextOffset = itemEnd - viewportSize
+
+    const contentSize = metrics.length
+      ? metrics.at(-1)!.start + metrics.at(-1)!.primary
+      : 0
+    nextOffset = Math.max(0, Math.min(nextOffset, Math.max(0, contentSize - viewportSize)))
+    if (nextOffset === offset) return false
+    this.view.setProperty(offsetProperty, nextOffset)
+    return true
   }
 
   private samplePath(path: QmlObject, progress: number): { x: number; y: number; attributes: Record<string, number> } {
@@ -301,11 +379,15 @@ export class QmlItemViewController {
   }
 
   private clearEntries(): void {
+    this.highlightGeometryUnsubscribe.forEach(unsubscribe => unsubscribe())
+    this.highlightGeometryUnsubscribe = []
     this.highlightItem?.destroy()
     this.highlightItem = null
     if (this.view.hasProperty('highlightItem')) this.view.setInternalProperty('highlightItem', null)
     this.entries.forEach(entry => entry.item.destroy())
+    this.sectionItems.forEach(item => item.destroy())
     this.entries = []
+    this.sectionItems = []
     this.view.setInternalProperty('currentItem', null)
   }
 
@@ -332,19 +414,27 @@ export class QmlItemViewController {
   }
 
   private updateHighlight(): void {
+    this.highlightGeometryUnsubscribe.forEach(unsubscribe => unsubscribe())
+    this.highlightGeometryUnsubscribe = []
     this.highlightItem?.destroy()
     this.highlightItem = null
     if (!this.view.hasProperty('highlight')) return
     const component = this.view.getProperty('highlight')
     const current = this.itemAt(Number(this.view.getProperty('currentIndex')))
-    if (!(component instanceof QmlComponent) || !current) {
+    if ((!(component instanceof QmlComponent) && !isDelegateFactory(component)) || !current) {
       this.view.setInternalProperty('highlightItem', null)
       return
     }
     const highlight = component.create(this.view).roots[0]
-    for (const name of ['x', 'y', 'width', 'height']) {
-      highlight.setProperty(name, current.getProperty(name))
+    const syncGeometry = () => {
+      highlight.setProperty('x', current.getProperty('x'))
+      highlight.setProperty('y', current.getProperty('y'))
+      highlight.setProperty('width', Number(current.getProperty('width')) || Number(current.getProperty('implicitWidth')) || 0)
+      highlight.setProperty('height', Number(current.getProperty('height')) || Number(current.getProperty('implicitHeight')) || 0)
     }
+    syncGeometry()
+    this.highlightGeometryUnsubscribe = ['x', 'y', 'width', 'height', 'implicitWidth', 'implicitHeight']
+      .map(name => current.onPropertyChanged(name, syncGeometry))
     this.highlightItem = highlight
     this.view.setInternalProperty('highlightItem', highlight)
   }

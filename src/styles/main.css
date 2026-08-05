@@ -471,6 +471,10 @@ body {
   white-space: nowrap;
 }
 
+.qml-runtime-root [data-qml-type="ItemDelegate"] {
+  min-height: 0;
+}
+
 .qml-runtime-root :is(
   [data-qml-type="Button"],
   [data-qml-type="RoundButton"],
@@ -522,7 +526,12 @@ body {
 }
 
 .qml-runtime-root :is(button, input, select, textarea):disabled {
-  opacity: 0.45;
+  opacity: 0.45 !important;
+  cursor: default;
+}
+
+.qml-runtime-root .qml-disabled {
+  opacity: 0.45 !important;
   cursor: default;
 }
 
@@ -611,6 +620,18 @@ body {
   font: inherit;
 }
 
+.qml-runtime-root :is(
+  [data-qml-type="TextField"],
+  [data-qml-type="TextInput"],
+  [data-qml-type="TextArea"],
+  [data-qml-type="TextEdit"],
+  [data-qml-type="SpinBox"],
+  [data-qml-type="ComboBox"],
+  [data-qml-type="Tumbler"]
+):not(:disabled):hover {
+  border-color: var(--qml-accent);
+}
+
 .qml-runtime-surface[data-qml-style="material"].qml-runtime-root :is(
   [data-qml-type="TextField"],
   [data-qml-type="TextInput"],
@@ -682,6 +703,34 @@ body {
   [data-qml-type="CheckBox"],
   [data-qml-type="RadioButton"],
   [data-qml-type="Switch"]
+):not(.qml-disabled):hover > .qml-check-indicator {
+  border-color: var(--qml-accent);
+  background: color-mix(in srgb, var(--qml-accent) 10%, var(--qml-panel-bg));
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="CheckBox"],
+  [data-qml-type="RadioButton"],
+  [data-qml-type="Switch"]
+):not(.qml-disabled):active > .qml-check-indicator {
+  border-color: var(--qml-accent);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--qml-accent) 30%, transparent);
+  filter: brightness(0.88);
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="CheckBox"],
+  [data-qml-type="RadioButton"],
+  [data-qml-type="Switch"]
+):focus-visible {
+  outline: var(--qml-focus-width) solid var(--qml-accent);
+  outline-offset: 2px;
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="CheckBox"],
+  [data-qml-type="RadioButton"],
+  [data-qml-type="Switch"]
 ) > .qml-check-indicator > .qml-check-mark {
   display: none;
   width: 10px;
@@ -697,6 +746,15 @@ body {
 ).qml-checked > .qml-check-indicator {
   border-color: var(--qml-accent);
   background: var(--qml-accent);
+}
+
+.qml-runtime-root :is(
+  [data-qml-type="CheckBox"],
+  [data-qml-type="RadioButton"],
+  [data-qml-type="Switch"]
+).qml-checked:not(.qml-disabled):hover > .qml-check-indicator {
+  border-color: var(--qml-accent-hover);
+  background: var(--qml-accent-hover);
 }
 
 .qml-runtime-root :is(
@@ -769,6 +827,10 @@ body {
   transform: translateX(18px);
 }
 
+.qml-runtime-root .qml-switch-control:not(.qml-disabled):hover > .qml-check-indicator::before {
+  background: var(--qml-control-text);
+}
+
 .qml-runtime-surface[data-qml-style="material"].qml-runtime-root .qml-switch-control > .qml-check-indicator {
   height: 14px;
   border: 0;
@@ -793,6 +855,17 @@ body {
   background: var(--qml-accent);
 }
 
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root .qml-switch-control:not(.qml-disabled):hover > .qml-check-indicator::before {
+  box-shadow: 0 1px 3px var(--qml-shadow), 0 0 0 6px color-mix(in srgb, var(--qml-accent) 14%, transparent);
+}
+
+.qml-runtime-surface[data-qml-style="material"].qml-runtime-root :is(
+  [data-qml-type="CheckBox"],
+  [data-qml-type="RadioButton"]
+):not(.qml-disabled):hover > .qml-check-indicator {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--qml-accent) 14%, transparent);
+}
+
 .qml-runtime-root [data-qml-type="GroupBox"] {
   padding: 12px;
   border: 1px solid var(--qml-control-border);
@@ -815,6 +888,14 @@ body {
 }
 
 .qml-runtime-root [data-qml-type="BusyIndicator"] {
+  position: relative;
+}
+
+.qml-runtime-root [data-qml-type="BusyIndicator"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
   border: 3px solid var(--qml-progress-bg);
   border-top-color: var(--qml-accent);
   border-radius: 50%;
@@ -869,6 +950,13 @@ body {
 
 .qml-runtime-root .qml-range-handle:active {
   cursor: grabbing;
+  background: var(--qml-accent);
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
+.qml-runtime-root .qml-range-handle:hover {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--qml-accent) 18%, transparent);
+  transform: translate(-50%, -50%) scale(1.08);
 }
 
 .qml-runtime-root .qml-range-handle[data-range-handle="first"] {
@@ -908,6 +996,16 @@ body {
   transform: translate(-50%, -50%);
 }
 
+.qml-runtime-root .qml-slider-control:hover .qml-slider-handle {
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--qml-accent) 18%, transparent);
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
+.qml-runtime-root .qml-slider-control:has(> .qml-range-native:active) .qml-slider-handle {
+  background: var(--qml-accent);
+  transform: translate(-50%, -50%) scale(1.15);
+}
+
 .qml-runtime-root .qml-dial-control {
   min-width: 52px;
   min-height: 52px;
@@ -924,6 +1022,15 @@ body {
       transparent 270deg 360deg
     );
   accent-color: var(--qml-accent);
+}
+
+.qml-runtime-root .qml-dial-control:hover {
+  border-color: var(--qml-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--qml-accent) 14%, transparent);
+}
+
+.qml-runtime-root .qml-dial-control:has(> .qml-range-native:active) {
+  filter: brightness(0.88);
 }
 
 .qml-runtime-root :is(.qml-slider-control, .qml-dial-control) > .qml-range-native {
@@ -990,7 +1097,7 @@ body {
   background: var(--qml-muted-text);
 }
 
-.qml-runtime-root [data-qml-type="BusyIndicator"][aria-busy="false"] {
+.qml-runtime-root [data-qml-type="BusyIndicator"][aria-busy="false"]::before {
   animation: none;
 }
 
@@ -1060,11 +1167,6 @@ body {
 .qml-runtime-root [data-qml-type="TreeView"] > [role="treeitem"][aria-selected="true"]:hover {
   color: var(--qml-on-accent);
   background: var(--qml-accent-hover);
-}
-
-.qml-runtime-root :is([data-qml-type="ListView"], [data-qml-type="GridView"]) > [data-qml-type="ItemDelegate"][aria-selected="true"] {
-  color: var(--qml-on-accent);
-  background: var(--qml-accent);
 }
 
 .qml-runtime-root :is([data-qml-type="Popup"], [data-qml-type="Dialog"], [data-qml-type="Drawer"], [data-qml-type="Menu"]) {

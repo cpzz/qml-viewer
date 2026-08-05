@@ -405,10 +405,10 @@ export class QmlObject {
     }
 
     const previousValue = this.values.get(name)
+    this.initializedProperties.add(name)
     if (Object.is(previousValue, value)) return
 
     this.values.set(name, value)
-    this.initializedProperties.add(name)
     const change = { name, previousValue, value }
     const listeners = this.listeners.get(name)
     if (listeners) [...listeners].forEach(listener => listener(change))

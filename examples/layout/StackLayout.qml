@@ -24,7 +24,7 @@ ColumnLayout {
         TabBar {
             id: tabBar
             Layout.fillWidth: true
-            TabButton { text: "Overview" }
+            TabButton { text: "Overview"; palette.buttonText: checked? "yellow" : "green" }
             TabButton { text: "Details"  }
             TabButton { text: "Settings" }
         }
@@ -107,6 +107,7 @@ ColumnLayout {
             Repeater {
                 model: 3
                 Button {
+                    property int index: 0
                     text: ["Alpha","Beta","Gamma"][index]
                     highlighted: standalone.currentIndex === index
                     onClicked: standalone.currentIndex = index

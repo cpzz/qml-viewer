@@ -12,6 +12,11 @@ function isDelegateFactory(value: unknown): value is QmlDelegateFactory {
 
 function modelRows(model: unknown): unknown[] {
   if (model instanceof QmlListModel) return model.toArray()
+  if (model instanceof QmlObject && model.typeName === 'ListModel') {
+    return model.children
+        .filter(child => child.typeName === 'ListElement')
+      .map(child => Object.fromEntries(child.getPropertyNames().map(name => [name, child.getProperty(name)])))
+  }
   if (Array.isArray(model)) return [...model]
   if (typeof model === 'number' && Number.isFinite(model)) {
     return Array.from({ length: Math.max(0, Math.floor(model)) }, (_, index) => index)

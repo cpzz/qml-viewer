@@ -244,7 +244,7 @@ export class QmlJsEngine {
           // 必须返回原始类型句柄。stringify 会多包一层引号（"#aarrggbb"），
           // 导致绑定求值结果是带引号字符串，parseQmlColor 解析失败 → 颜色失效。
           if (typeof result === 'string') return context.newString(result)
-          if (typeof result === 'boolean') return context.newBoolean(result)
+          if (typeof result === 'boolean') return result ? context.true : context.false
           if (typeof result === 'number') return context.newNumber(result)
           return context.newString(stringify(result))
         })
@@ -325,6 +325,13 @@ export class QmlJsEngine {
       installNumberNamespace('Item', {
         TopLeft: 0, Top: 1, TopRight: 2, Left: 3, Center: 4,
         Right: 5, BottomLeft: 6, Bottom: 7, BottomRight: 8,
+      })
+      installNumberNamespace('Text', {
+        NoWrap: 0, WordWrap: 1, WrapAnywhere: 2, Wrap: 3,
+        ElideLeft: 0, ElideRight: 1, ElideMiddle: 2, ElideNone: 3,
+        AlignLeft: 1, AlignRight: 2, AlignHCenter: 4,
+        AlignTop: 32, AlignVCenter: 64, AlignBottom: 128,
+        ProportionalHeight: 0, FixedHeight: 1,
       })
       installNumberNamespace('Keys', { BeforeItem: 0, AfterItem: 1 })
       installNumberNamespace('KeyNavigation', { BeforeItem: 0, AfterItem: 1 })

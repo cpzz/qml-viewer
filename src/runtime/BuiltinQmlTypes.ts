@@ -3,6 +3,7 @@ import { QmlTypeRegistry, type QmlTypeDefinition } from './QmlTypeRegistry'
 import { forceActiveFocus, nextItemInFocusChain, stackItem } from './QmlItemController'
 import { childAt, contains, mapFromItem, mapToItem } from './QmlItemGeometry'
 import { grabToImage } from './QmlItemGrab'
+import type { QmlControlStyle } from './QmlControlStyle'
 
 const property = (
   name: string,
@@ -295,6 +296,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   { name: 'Label', baseType: 'Control', properties: [
     property('text', 'string', ''),
     property('color', 'color', 'black'),
+    property('focusPolicy', 'var', 'Qt.NoFocus'),
     property('wrapMode', 'var', 'Text.NoWrap'),
     property('elide', 'var', 'Text.ElideNone'),
     property('maximumLineCount', 'int', 2147483647),
@@ -535,6 +537,7 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('orientation', 'var', 'ListView.Vertical'),
       property('cacheBuffer', 'real', 0),
       property('section.property', 'string', ''),
+      property('section.delegate', 'var', null),
       property('highlight', 'var', null),
       property('highlightItem', 'var', null, { readonly: true }),
       property('highlightMoveDuration', 'int', 300),
@@ -1001,7 +1004,16 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   { name: 'Page', baseType: 'Pane', properties: [property('title', 'string', '')] },
   { name: 'Frame', baseType: 'Pane' },
   { name: 'GroupBox', baseType: 'Frame', properties: [property('title', 'string', '')] },
-  { name: 'BusyIndicator', baseType: 'Control', properties: [property('running', 'bool', true)] },
+  {
+    name: 'BusyIndicator',
+    baseType: 'Control',
+    properties: [
+      property('running', 'bool', true),
+      property('focusPolicy', 'var', 'Qt.NoFocus'),
+      property('implicitWidth', 'real', 24, { readonly: true }),
+      property('implicitHeight', 'real', 24, { readonly: true }),
+    ],
+  },
   {
     name: 'Calendar',
     baseType: 'Control',
@@ -1023,7 +1035,11 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
       property('policy', 'var', 'ScrollBar.AsNeeded'),
     ],
   },
-  { name: 'StackLayout', baseType: 'Item', properties: [property('currentIndex', 'int', 0)] },
+  {
+    name: 'StackLayout',
+    baseType: 'Item',
+    properties: [property('currentIndex', 'int', 0), property('count', 'int', 0, { readonly: true })],
+  },
   { name: 'SwipeView', baseType: 'Control', properties: [property('currentIndex', 'int', 0), property('orientation', 'var', 'Qt.Horizontal')] },
   {
     name: 'StackView',
@@ -1156,8 +1172,20 @@ export const builtinQmlTypeDefinitions: QmlTypeDefinition[] = [
   { name: 'Shortcut', baseType: 'QtObject', properties: [property('sequence', 'string', ''), property('enabled', 'bool', true)], signals: ['activated'] },
 ]
 
-export function createBuiltinQmlTypeRegistry(): QmlTypeRegistry {
+export function createBuiltinQmlTypeRegistry(controlStyle: QmlControlStyle = 'Fusion'): QmlTypeRegistry {
+  const itemDelegateImplicitHeight: Record<QmlControlStyle, number> = {
+    Fusion: 30,
+    Universal: 32,
+    Material: 36,
+  }
   const registry = new QmlTypeRegistry()
-  builtinQmlTypeDefinitions.forEach(type => registry.register(type))
+  builtinQmlTypeDefinitions.forEach(type => registry.register(type.name === 'ItemDelegate'
+    ? {
+        ...type,
+        properties: type.properties?.map(definition => definition.name === 'implicitHeight'
+          ? { ...definition, initialValue: itemDelegateImplicitHeight[controlStyle] }
+          : definition),
+      }
+    : type))
   return registry
 }

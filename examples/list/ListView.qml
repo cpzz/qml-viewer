@@ -5,15 +5,15 @@ import QtQuick.Layouts
 // ================================================================
 // ListView 属性综合验证
 // 验证项：
-//   model 数组 / ListModel 数据源
-//   delegate 委托项渲染
-//   currentIndex / currentItem 当前选中
-//   highlight 高亮委托
-//   section.property / section.delegate 分组标题
-//   clip 超出裁剪
-//   spacing / orientation
-//   ScrollBar.vertical 附加滚动条
-//   itemAdded / itemRemoved 动态增删
+// model 数组 / ListModel 数据源
+// delegate 委托项渲染
+// currentIndex / currentItem 当前选中
+// highlight 高亮委托
+// section.property / section.delegate 分组标题
+// clip 超出裁剪
+// spacing / orientation
+// ScrollBar.vertical 附加滚动条
+// itemAdded / itemRemoved 动态增删
 // ================================================================
 
 ColumnLayout {
@@ -24,36 +24,44 @@ ColumnLayout {
     Text { text: "ListView: basic model / delegate / highlight"; color: "#e8e8e8"; font.pixelSize: 14 }
     RowLayout {
         spacing: 12
-        ListView {
-            id: basicList
-            width: 260; height: 180
-            clip: true
-            spacing: 2
-            model: ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta"]
-            currentIndex: 1
+        Rectangle {
+            width: 260
+            height: 180
+            anchors.fill: true
+            color: "blue"
 
-            // 期望：选中项背景为 accent 蓝色；文字白色
-            highlight: Rectangle { color: "#3b82f6"; radius: 3 }
-            highlightMoveDuration: 120
+            ListView {
+                id: basicList
+                width: 260; height: 180
+                clip: true
+                spacing: 2
+                model: ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota", "Kappa", "Lambda", "Mu"]
+                currentIndex: 1
+                
+                // 期望：选中项背景为 accent 蓝色；文字白色
+                highlight: Rectangle { color: "#3b82f6"; radius: 3 }
+                highlightMoveDuration: 120
 
-            delegate: ItemDelegate {
-                width: basicList.width
-                // 期望：模型索引 + 文字左对齐；高度 32px
-                text: (index + 1) + ". " + modelData
-                highlighted: basicList.currentIndex === index
-                onClicked: {
-                    basicList.currentIndex = index
-                    statusLabel.text = "selected: " + modelData
+                delegate: ItemDelegate {
+                    width: basicList.width
+                    // 期望：模型索引 + 文字左对齐；高度 32px
+                    text: (index + 1) + ". " + modelData
+                    highlighted: basicList.currentIndex === index
+                    onClicked: {
+                        basicList.currentIndex = index
+                        statusLabel.text = "selected: " + modelData
+                    }
                 }
-            }
 
-            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+            }
         }
         ColumnLayout {
             spacing: 6
             Text { text: "current: " + (basicList.currentItem?.text ?? "—"); color: "#a3e635"; font.pixelSize: 12 }
             Button {
                 text: "Select 3rd"
+                width: 200
                 onClicked: basicList.currentIndex = 2
             }
         }
@@ -72,10 +80,10 @@ ColumnLayout {
             ListElement { lang: "Frontend"; name: "JavaScript" }
             ListElement { lang: "Frontend"; name: "TypeScript" }
             ListElement { lang: "Frontend"; name: "CSS" }
-            ListElement { lang: "Backend";  name: "Python" }
-            ListElement { lang: "Backend";  name: "Go" }
-            ListElement { lang: "Systems";  name: "Rust" }
-            ListElement { lang: "Systems";  name: "C++" }
+            ListElement { lang: "Backend"; name: "Python" }
+            ListElement { lang: "Backend"; name: "Go" }
+            ListElement { lang: "Systems"; name: "Rust" }
+            ListElement { lang: "Systems"; name: "C++" }
         }
         section.property: "lang"
         // 期望：分组标题行背景深色，文字白色粗体
@@ -104,7 +112,7 @@ ColumnLayout {
     Text { text: "ListView: horizontal orientation"; color: "#e8e8e8"; font.pixelSize: 14 }
     ListView {
         id: hList
-        width: 380; height: 60
+        width: 880; height: 60
         clip: true
         orientation: Qt.Horizontal
         spacing: 6

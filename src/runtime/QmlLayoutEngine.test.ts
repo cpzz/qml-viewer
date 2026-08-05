@@ -111,6 +111,35 @@ describe('QmlLayoutEngine', () => {
     expect(spanning.getProperty('width')).toBe(210)
   })
 
+  it('derives GridLayout size and skips occupied cells and non-visual Repeaters', () => {
+    const registry = createBuiltinQmlTypeRegistry()
+    const layout = registry.create('GridLayout')
+    layout.setProperty('columns', 3)
+    layout.setProperty('columnSpacing', 6)
+    layout.setProperty('rowSpacing', 6)
+    registry.create('Repeater', layout)
+    const spanning = registry.create('Rectangle', layout)
+    spanning.setProperty('Layout.columnSpan', 2)
+    spanning.setProperty('Layout.preferredWidth', 120)
+    spanning.setProperty('Layout.preferredHeight', 50)
+    const topRight = registry.create('Rectangle', layout)
+    topRight.setProperty('Layout.preferredWidth', 56)
+    topRight.setProperty('Layout.preferredHeight', 50)
+    const nextRow = registry.create('Rectangle', layout)
+    nextRow.setProperty('Layout.preferredWidth', 56)
+    nextRow.setProperty('Layout.preferredHeight', 50)
+    const engine = new QmlLayoutEngine(layout)
+
+    expect(spanning.getProperty('x')).toBe(0)
+    expect(topRight.getProperty('y')).toBe(0)
+    expect(topRight.getProperty('x')).toBeGreaterThan(spanning.getProperty('x') as number)
+    expect(nextRow.getProperty('x')).toBe(0)
+    expect(nextRow.getProperty('y')).toBe(56)
+    expect(layout.getProperty('implicitWidth')).toBe(182)
+    expect(layout.getProperty('implicitHeight')).toBe(106)
+    engine.dispose()
+  })
+
   it('uses reactive implicit sizes when no preferred size is set', () => {
     const registry = createBuiltinQmlTypeRegistry()
     const layout = registry.create('RowLayout')
@@ -131,6 +160,34 @@ describe('QmlLayoutEngine', () => {
     expect(label.getProperty('width')).toBe(80)
     expect(fill.getProperty('width')).toBe(115)
     engine.dispose()
+  })
+
+  it('settles nested layout geometry when child implicit sizes change during relayout', () => {
+    const registry = createBuiltinQmlTypeRegistry()
+    const row = registry.create('RowLayout')
+    const column = registry.create('ColumnLayout', row)
+    column.setProperty('spacing', 4)
+    const indicator = registry.create('BusyIndicator', column)
+    const label = registry.create('Label', column)
+    const button = registry.create('Button', row)
+    const rowEngine = new QmlLayoutEngine(row)
+    const columnEngine = new QmlLayoutEngine(column)
+
+    indicator.setInternalProperty('implicitWidth', 24)
+    indicator.setInternalProperty('implicitHeight', 24)
+    label.setInternalProperty('implicitWidth', 67)
+    label.setInternalProperty('implicitHeight', 14)
+    button.setInternalProperty('implicitWidth', 64)
+    button.setInternalProperty('implicitHeight', 30)
+
+    expect(column.getProperty('implicitHeight')).toBe(42)
+    expect(column.getProperty('height')).toBe(42)
+    expect(row.getProperty('implicitHeight')).toBe(42)
+    expect(row.getProperty('height')).toBe(0)
+    expect(label.getProperty('y')).toBe(28)
+
+    columnEngine.dispose()
+    rowEngine.dispose()
   })
 
   it('aligns linear children on the cross axis', () => {

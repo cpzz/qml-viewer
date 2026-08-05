@@ -374,6 +374,19 @@ describe('activateQmlDocument', () => {
     expect(document.ids.get('root')?.getProperty('clickCount')).toBe(1)
   })
 
+  it('evaluates concatenations that begin and end with string literals', () => {
+    const document = activateQmlDocument(parseQML(`
+      Item {
+        id: root
+        property int first: 40
+        property int second: 160
+        Text { id: label; text: "[" + root.first.toFixed(0) + ", " + root.second.toFixed(0) + "]" }
+      }
+    `), jsEngine)
+
+    expect(document.ids.get('label')?.getProperty('text')).toBe('[40, 160]')
+  })
+
   it('connects attached Keys handlers to Item signals', () => {
     const document = activateQmlDocument(parseQML(`
       Item {
@@ -466,7 +479,12 @@ describe('activateQmlDocument', () => {
         Repeater {
           id: repeater
           model: 2
-          delegate: Item { property int index: -1 }
+          delegate: RowLayout {
+            property int index: -1
+            spacing: 5
+            Rectangle { width: 20; height: 10 }
+            Rectangle { width: 30; height: 10 }
+          }
         }
       }
     `), jsEngine)
@@ -478,6 +496,7 @@ describe('activateQmlDocument', () => {
     expect((list.callMethod('itemAtIndex', 1) as QmlObject).getProperty('index')).toBe(1)
     expect(repeater.getProperty('count')).toBe(2)
     expect((repeater.callMethod('itemAt', 1) as QmlObject).getProperty('index')).toBe(1)
+    expect((repeater.callMethod('itemAt', 0) as QmlObject).getProperty('implicitWidth')).toBe(55)
 
     document.dispose()
     expect(list.children).toHaveLength(0)

@@ -72,7 +72,7 @@ ColumnLayout {
                 }
             }
         }
-        Label { text: "h = " + behaviorBox.height.toFixed(0); color: "#a5b4fc"; font.pixelSize: 13 }
+        Label { text: "h = " + behaviorBox.height.toFixed(0); color: "#a5b4fc"; font.pixelSize: 13; width: 100 }
     }
 
     // ---- SequentialAnimation ----
@@ -104,25 +104,28 @@ ColumnLayout {
     Text { text: "ParallelAnimation: x + scale simultaneously"; color: "#e8e8e8"; font.pixelSize: 14 }
     RowLayout {
         spacing: 12
-        Rectangle {
-            id: parBox
-            width: 50; height: 50; radius: 6; color: "#10b981"
-            x: 0; scale: 1
+        Item {
+            width: 180; height: 80
+            Rectangle {
+                id: parBox
+                width: 50; height: 50; radius: 6; color: "#10b981"
+                x: 0; y: 15; scale: 1
 
-            ParallelAnimation {
-                id: parAnim
-                NumberAnimation { target: parBox; property: "x";     from: 0; to: 220; duration: 600; easing.type: Easing.InOutBack }
-                NumberAnimation { target: parBox; property: "scale"; from: 1; to: 1.6; duration: 600; easing.type: Easing.InOutBack }
-            }
-            ParallelAnimation {
-                id: parReturn
-                NumberAnimation { target: parBox; property: "x";     from: 220; to: 0; duration: 600; easing.type: Easing.InOutBack }
-                NumberAnimation { target: parBox; property: "scale"; from: 1.6; to: 1; duration: 600; easing.type: Easing.InOutBack }
+                ParallelAnimation {
+                    id: parAnim
+                    NumberAnimation { target: parBox; property: "x";     from: 0; to: 100; duration: 600; easing.type: Easing.InOutBack }
+                    NumberAnimation { target: parBox; property: "scale"; from: 1; to: 1.6; duration: 600; easing.type: Easing.InOutBack }
+                }
+                ParallelAnimation {
+                    id: parReturn
+                    NumberAnimation { target: parBox; property: "x";     from: 100; to: 0; duration: 600; easing.type: Easing.InOutBack }
+                    NumberAnimation { target: parBox; property: "scale"; from: 1.6; to: 1; duration: 600; easing.type: Easing.InOutBack }
+                }
             }
         }
         Button {
             text: "Go"
-            onClicked: { if (parBox.x < 110) parAnim.restart(); else parReturn.restart() }
+            onClicked: { if (parBox.x < 50) parAnim.restart(); else parReturn.restart() }
         }
     }
 

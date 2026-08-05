@@ -90,10 +90,14 @@ describe('built-in QML types', () => {
     expect(slider.getProperty('value')).toBe(15)
   })
 
-  it('gives ItemDelegate a measurable default height for item views', () => {
-    const delegate = createBuiltinQmlTypeRegistry().create('ItemDelegate')
+  it.each([
+    ['Fusion', 30],
+    ['Universal', 32],
+    ['Material', 36],
+  ] as const)('gives ItemDelegate the %s style height for item views', (style, height) => {
+    const delegate = createBuiltinQmlTypeRegistry(style).create('ItemDelegate')
 
-    expect(delegate.getProperty('implicitHeight')).toBe(30)
+    expect(delegate.getProperty('implicitHeight')).toBe(height)
   })
 
   it('keeps editor type suggestions aligned with runtime registrations', () => {

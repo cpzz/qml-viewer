@@ -41,6 +41,55 @@ describe('QmlItemViewController', () => {
     expect(view.children.length).toBe(3)
   })
 
+  it('scrolls a selected sectioned ListView delegate fully into view at either edge', () => {
+    const registry = createBuiltinQmlTypeRegistry()
+    const view = registry.create('ListView')
+    view.setProperty('width', 100)
+    view.setProperty('height', 60)
+    view.setProperty('spacing', 1)
+    view.setProperty('model', [
+      { lang: 'Frontend', name: 'JavaScript' },
+      { lang: 'Frontend', name: 'TypeScript' },
+      { lang: 'Backend', name: 'Python' },
+    ])
+    view.setProperty('section.property', 'lang')
+    view.setProperty('section.delegate', new QmlComponent(`
+      Rectangle { width: 100; height: 24 }
+    `, registry))
+    view.setProperty('delegate', createDelegate(registry))
+    new QmlItemViewController(view)
+
+    view.setProperty('currentIndex', 1)
+    expect(view.getProperty('contentY')).toBe(6)
+
+    view.setProperty('contentY', 30)
+    view.setProperty('currentIndex', 0)
+    expect(view.getProperty('contentY')).toBe(25)
+  })
+
+  it('uses the active control style height when positioning ItemDelegate rows', () => {
+    const registry = createBuiltinQmlTypeRegistry('Material')
+    const view = registry.create('ListView')
+    view.setProperty('width', 100)
+    view.setProperty('height', 100)
+    view.setProperty('spacing', 1)
+    view.setProperty('model', ['One', 'Two', 'Three'])
+    view.setProperty('delegate', new QmlComponent(`
+      ItemDelegate {
+        property int index: -1
+        property var modelData
+        width: 100
+      }
+    `, registry))
+    const controller = new QmlItemViewController(view)
+
+    expect(controller.itemAt(0)?.getProperty('height')).toBe(0)
+    expect(controller.itemAt(0)?.getProperty('implicitHeight')).toBe(36)
+    expect(controller.itemAt(1)?.getProperty('y')).toBe(37)
+    expect(controller.itemAt(2)?.getProperty('y')).toBe(74)
+    expect(view.getProperty('contentHeight')).toBe(110)
+  })
+
   it('lays out a virtualized GridView and updates observed model roles', () => {
     const registry = createBuiltinQmlTypeRegistry()
     const view = registry.create('GridView')

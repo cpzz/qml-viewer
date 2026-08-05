@@ -17,10 +17,18 @@ describe('QML control styles', () => {
   })
 
   it('styles interactive control states across the runtime surface', () => {
-    expect(stylesheet).toMatch(/:hover/)
-    expect(stylesheet).toMatch(/:active/)
-    expect(stylesheet).toMatch(/:focus-visible/)
-    expect(stylesheet).toMatch(/:checked/)
+    expect(stylesheet).toMatch(/data-qml-type="Button"[\s\S]*?:hover/)
+    expect(stylesheet).toMatch(/data-qml-type="CheckBox"[\s\S]*?:not\(\.qml-disabled\):hover/)
+    expect(stylesheet).toMatch(/data-qml-type="CheckBox"[\s\S]*?:not\(\.qml-disabled\):active/)
+    expect(stylesheet).toMatch(/data-qml-type="CheckBox"[\s\S]*?:focus-visible/)
+    expect(stylesheet).toMatch(/data-qml-type="TextField"[\s\S]*?:not\(:disabled\):hover/)
+    expect(stylesheet).toMatch(/\.qml-slider-control:hover \.qml-slider-handle/)
+    expect(stylesheet).toMatch(/\.qml-slider-control:has\(> \.qml-range-native:active\)/)
+    expect(stylesheet).toMatch(/\.qml-dial-control:hover/)
     expect(stylesheet).toMatch(/:disabled/)
+  })
+
+  it('lets QML runtime geometry control ItemDelegate height', () => {
+    expect(stylesheet).toMatch(/\[data-qml-type="ItemDelegate"\]\s*\{\s*min-height:\s*0;/)
   })
 })

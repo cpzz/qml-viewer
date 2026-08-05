@@ -142,6 +142,17 @@ describe('QmlObject', () => {
     expect(object.getProperty('createdAt')).toEqual(new Date(1000))
   })
 
+  it('accepts required properties initialized to primitive defaults', () => {
+    const object = new QmlObject('Delegate')
+    object.defineProperty({ name: 'active', type: 'bool', required: true })
+    object.defineProperty({ name: 'index', type: 'int', required: true })
+
+    object.setProperty('active', false)
+    object.setProperty('index', 0)
+
+    expect(() => object.complete()).not.toThrow()
+  })
+
   it('rejects duplicate and unknown properties', () => {
     const object = new QmlObject('Item')
     object.defineProperty({ name: 'width', type: 'real' })

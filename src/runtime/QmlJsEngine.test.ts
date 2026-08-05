@@ -104,6 +104,10 @@ describe('QmlJsEngine', () => {
       .toEqual([0, 2, 34, 38])
     expect(engine.evaluateLive('[Item.TopLeft, Item.Center, Item.BottomRight]', bridge))
       .toEqual([0, 4, 8])
+    expect(engine.evaluateLive('[Text.NoWrap, Text.WordWrap, Text.WrapAnywhere, Text.Wrap]', bridge))
+      .toEqual([0, 1, 2, 3])
+    expect(engine.evaluateLive('[Text.ElideLeft, Text.ElideRight, Text.ElideMiddle, Text.ElideNone]', bridge))
+      .toEqual([0, 1, 2, 3])
     expect(engine.evaluateLive('[Keys.BeforeItem, KeyNavigation.AfterItem, Drag.Automatic]', bridge))
       .toEqual([0, 1, 1])
     // Qt 颜色函数（QML color 值类型）：返回 Qt 语义字符串 #RRGGBB / #AARRGGBB

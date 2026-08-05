@@ -125,14 +125,17 @@ export class QmlExecutionEnvironment {
       getContextProperty: name => toBridgeValue(
         name === 'parent' ? context.parent
           : name === 'control' ? controlObject
-            : propertyGroupOwners.has(name) ? (() => {
+            : propertyOwners.has(name) && (
+              !propertyGroupOwners.has(name) || propertyOwners.get(name)?.isPropertyAssigned(name)
+            ) ? propertyOwners.get(name)?.getProperty(name)
+              : propertyGroupOwners.has(name) ? (() => {
               const owner = propertyGroupOwners.get(name)
               if (!owner) return undefined
               const id = bridgeObjectId(owner)
               if (!objects.has(id)) objects.set(id, owner)
               return { __qmlObjectId: id, __qmlPropertyPrefix: `${name}.` }
             })()
-              : propertyOwners.get(name)?.getProperty(name),
+                : undefined,
       ),
       setContextProperty: (name, value) => propertyOwners.get(name)?.setProperty(name, value),
       getObjectMemberKind: (id, name) => {

@@ -77,7 +77,7 @@ export default function PreviewPanel({ code, isLight, qmlControlStyle, filePath,
             `${diagnostic.range.start.line}:${diagnostic.range.start.column} ${diagnostic.message}`
           )).join('\n'))
         }
-        const registry = createBuiltinQmlTypeRegistry()
+        const registry = createBuiltinQmlTypeRegistry(qmlControlStyle)
         if (filePath && window.electronAPI?.qmlReadText) {
           const basePath = directoryName(filePath)
           try {
@@ -127,7 +127,7 @@ export default function PreviewPanel({ code, isLight, qmlControlStyle, filePath,
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [code, filePath])
+  }, [code, filePath, qmlControlStyle])
 
   useEffect(() => () => {
     activeRef.current?.scene.dispose()

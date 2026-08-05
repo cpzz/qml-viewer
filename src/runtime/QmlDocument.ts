@@ -52,6 +52,23 @@ interface InlineDelegateFactory {
   activate?: (instance: QmlDocumentInstance) => void
 }
 
+function createInlineDelegateFactory(child: QMLNode, registry: QmlTypeRegistry, lexicalScope: QmlScope): InlineDelegateFactory {
+  const factory: InlineDelegateFactory = {
+    create: (delegateParent: QmlObject | null = null, context = {}) => {
+      const instance = instantiateQmlDocument([child], registry, delegateParent, false, lexicalScope)
+      const root = instance.roots[0]
+      for (const [contextName, value] of Object.entries(context)) {
+        if (!root.hasProperty(contextName)) root.defineProperty({ name: contextName, type: 'var' })
+        root.setProperty(contextName, value)
+      }
+      instance.roots.forEach(item => item.complete())
+      factory.activate?.(instance)
+      return instance
+    },
+  }
+  return factory
+}
+
 function decodeQmlEscapes(value: string): string {
   return value.replace(/\\(u[\da-fA-F]{4}|x[\da-fA-F]{2}|[nrtbfv0\\'"])/g, (_, escape: string) => {
     if (escape.startsWith('u')) return String.fromCharCode(Number.parseInt(escape.slice(1), 16))
@@ -157,26 +174,16 @@ function instantiateNode(
     scope.defineId(node.id, object)
   }
 
-  node.children.forEach(child => (
+  const implicitDelegate = node.type === 'Repeater' ? node.children[0] : undefined
+  if (implicitDelegate && object.hasProperty('delegate')) {
+    object.initializeProperty('delegate', createInlineDelegateFactory(implicitDelegate, registry, scope))
+  }
+  node.children.filter(child => child !== implicitDelegate).forEach(child => (
     instantiateNode(child, object, ids, scope, pendingAliases, nodeObjects, registry, true, true, nestedDocuments)
   ))
   Object.entries(node.blockProperties ?? {}).forEach(([name, child]) => {
-    if (name === 'delegate' && object.hasProperty(name)) {
-      const factory: InlineDelegateFactory = {
-        create: (delegateParent: QmlObject | null = null, context = {}) => {
-          // completeRoots=false so required properties are satisfied before complete()
-          const instance = instantiateQmlDocument([child], registry, delegateParent, false)
-          const root = instance.roots[0]
-          for (const [contextName, value] of Object.entries(context)) {
-            if (!root.hasProperty(contextName)) root.defineProperty({ name: contextName, type: 'var' })
-            root.setProperty(contextName, value)
-          }
-          instance.roots.forEach(r => r.complete())
-          factory.activate?.(instance)
-          return instance
-        },
-      }
-      object.initializeProperty(name, factory)
+    if ((name === 'delegate' || name === 'section.delegate' || name === 'highlight') && object.hasProperty(name)) {
+      object.initializeProperty(name, createInlineDelegateFactory(child, registry, scope))
       return
     }
     const childObject = instantiateNode(
@@ -245,9 +252,10 @@ export function instantiateQmlDocument(
   registry: QmlTypeRegistry = createBuiltinQmlTypeRegistry(),
   parent: QmlObject | null = null,
   completeRoots = true,
+  parentScope: QmlScope | null = null,
 ): QmlDocumentInstance {
   const ids = new Map<string, QmlObject>()
-  const scope = new QmlScope()
+  const scope = new QmlScope(parentScope)
   const pendingAliases: PendingAlias[] = []
   const nodeObjects = new Map<QMLNode, QmlObject>()
   const nestedDocuments: QmlDocumentInstance[] = []
@@ -286,8 +294,7 @@ function handlerBody(source: string): string {
 function isStaticLiteral(source: string): boolean {
   const trimmed = source.trim()
   if (/^(?:true|false|null|undefined|[+-]?(?:\d+\.?\d*|\.\d+))$/.test(trimmed)) return true
-  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
-      (trimmed.startsWith("'") && trimmed.endsWith("'"))) return true
+  if (/^"(?:\\.|[^"\\])*"$/.test(trimmed) || /^'(?:\\.|[^'\\])*'$/.test(trimmed)) return true
   if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return false
   try {
     JSON.parse(trimmed)
@@ -353,9 +360,11 @@ export function activateQmlDocument(
     const flattenedNodes = instance.nodes.flatMap(function flatten(current): QMLNode[] {
       return [
         current,
-        ...current.children.flatMap(flatten),
+        ...current.children
+          .filter((_, index) => current.type !== 'Repeater' || index !== 0)
+          .flatMap(flatten),
         ...Object.entries(current.blockProperties ?? {})
-          .filter(([name]) => name !== 'delegate')
+          .filter(([name]) => name !== 'delegate' && name !== 'section.delegate' && name !== 'highlight')
           .flatMap(([, child]) => flatten(child)),
         ...Object.values(current.objectListProperties ?? {}).flatMap(list => list.flatMap(flatten)),
       ]
@@ -373,9 +382,16 @@ export function activateQmlDocument(
 
     for (const node of flattenedNodes) {
       const object = instance.nodeObjects.get(node)!
-      const delegate = object.hasProperty('delegate') ? object.getProperty('delegate') as InlineDelegateFactory | null : null
-      if (delegate && typeof delegate.create === 'function') {
-        delegate.activate = created => activateInstance(created, new QmlExecutionEnvironment(jsEngine, created.scope))
+      for (const propertyName of ['delegate', 'section.delegate', 'highlight']) {
+        const delegate = object.hasProperty(propertyName)
+          ? object.getProperty(propertyName) as InlineDelegateFactory | null
+          : null
+        if (delegate && typeof delegate.create === 'function') {
+          delegate.activate = created => {
+            activateInstance(created, new QmlExecutionEnvironment(jsEngine, created.scope))
+            installRuntimeControllers(created)
+          }
+        }
       }
       methodSources.set(object, Object.values(node.methods ?? {}))
 
@@ -528,6 +544,10 @@ export function activateQmlDocument(
         const controller = new QmlRepeaterController(object)
         repeaterControllers.push(controller)
         object.defineMethod('itemAt', index => controller.itemAt(Number(index)))
+      } else if (object.typeName === 'StackLayout') {
+        const updateCount = () => object.setInternalProperty('count', object.children.length)
+        updateCount()
+        disconnectors.push(object.connectSignal('childrenChanged', updateCount))
       } else if (['RowLayout', 'ColumnLayout', 'GridLayout'].includes(object.typeName)) {
         layoutEngines.push(new QmlLayoutEngine(object))
       } else if (object.typeName === 'Timer') {
